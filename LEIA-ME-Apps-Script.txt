@@ -1,0 +1,22 @@
+ESTACIONA FÁCIL — CONFIGURAÇÃO INICIAL DO GOOGLE SHEETS
+
+1. Abra a planilha Estaciona Fácil.
+2. Vá em Extensões > Apps Script.
+3. Apague o código de exemplo do arquivo Code.gs e cole o conteúdo do arquivo Code.gs fornecido.
+4. No topo do código, altere APP_TOKEN para uma chave exclusiva longa. Exemplo: EF-2026-uma-chave-bem-longa-e-aleatoria. Guarde essa chave; será usada na configuração do aplicativo. Não publique nem compartilhe a chave.
+5. Clique em Salvar.
+6. No seletor de funções, escolha setupEstacionaFacil e clique em Executar.
+7. Autorize as permissões solicitadas pelo Google.
+8. Volte à planilha. Devem existir as abas Configuracoes, Mensalistas, EmAndamento e Movimentacoes.
+9. Para publicar: Implantar > Nova implantação > selecione Aplicativo da Web.
+   - Executar como: Eu
+   - Quem pode acessar: Qualquer pessoa (necessário para a chamada do app; a gravação é validada por token)
+10. Clique em Implantar, autorize se solicitado e copie a URL terminada em /exec.
+
+TESTE DE LEITURA:
+Cole a URL /exec no navegador acrescentando ?action=ping. Deve aparecer um JSON com ok:true e app:Estaciona Fácil.
+
+IMPORTANTE:
+- Não coloque dados reais de clientes antes de finalizar a integração e os testes.
+- O token protege as operações de gravação, mas a leitura inicial desta versão é pública para o endpoint publicado. Por isso, use uma planilha dedicada e não armazene dados pessoais reais até reforçarmos a autenticação e os controles de acesso.
+- Sempre que alterar o código depois da implantação, use Implantar > Gerenciar implantações > Editar > Nova versão.
