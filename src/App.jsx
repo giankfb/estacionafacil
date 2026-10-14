@@ -22,6 +22,16 @@ const minutesBetween = (a,b) => Math.max(0, Math.floor((new Date(b).getTime()-ne
 const duration = mins => `${Math.floor(mins/60)}h ${String(mins%60).padStart(2,'0')}min`;
 const fmtTime = iso => new Date(iso).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});
 const fmtDate = iso => new Date(iso).toLocaleDateString('pt-BR');
+const normalizeTime = value => {
+ if (!value) return '';
+ const s=String(value);
+ const m=s.match(/(?:^|\s)(\d{1,2}):(\d{2})(?::\d{2})?/);
+ if(m) return `${String(m[1]).padStart(2,'0')}:${m[2]}`;
+ const d=new Date(value);
+ if(!Number.isNaN(d.getTime())) return d.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});
+ return s;
+};
+const normalizeSettings = s => s ? ({...DEFAULTS,...s,open:normalizeTime(s.open)||DEFAULTS.open,close:normalizeTime(s.close)||DEFAULTS.close}) : DEFAULTS;
 
 export default function App(){
  const [tab,setTab]=useState('pdv');
@@ -54,7 +64,7 @@ export default function App(){
     const data=await apiRequest(`${api.url}${api.url.includes('?')?'&':'?'}action=read`);
     if(cancelled)return;
     const s=data.state||{};
-    if(s.settings)setSettings(s.settings);
+    if(s.settings)setSettings(normalizeSettings(s.settings));
     if(Array.isArray(s.clients))setClients(s.clients);
     if(Array.isArray(s.active))setActive(s.active);
     if(Array.isArray(s.history))setHistory(s.history);
@@ -118,7 +128,7 @@ export default function App(){
   try{
    const data=await apiRequest(`${api.url}${api.url.includes('?')?'&':'?'}action=read`);
    const s=data.state||{};
-   if(s.settings)setSettings(s.settings);
+   if(s.settings)setSettings(normalizeSettings(s.settings));
    if(Array.isArray(s.clients))setClients(s.clients);
    if(Array.isArray(s.active))setActive(s.active);
    if(Array.isArray(s.history))setHistory(s.history);

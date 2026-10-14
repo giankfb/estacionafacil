@@ -77,7 +77,12 @@ function saveState_(state) {
     if (state.settings && typeof state.settings === 'object') {
       const sh = ss.getSheetByName(SHEETS.settings.name);
       const rows = Object.entries(state.settings).map(([k,v]) => [k, String(v)]);
-      sh.clearContents(); sh.getRange(1,1,1,2).setValues([SHEETS.settings.headers]);
+      sh.clearContents();
+      sh.getRange(1,1,1,2).setValues([SHEETS.settings.headers]);
+      // Horários devem ser armazenados como TEXTO. Caso a célula esteja
+      // formatada como hora, o Google Sheets devolve um objeto Date (1899),
+      // e o aplicativo acaba exibindo "Sat Dec 30 1899...".
+      sh.getRange(1,1,Math.max(2, rows.length + 1),2).setNumberFormat('@');
       if (rows.length) sh.getRange(2,1,rows.length,2).setValues(rows);
     }
     writeRows_(ss, 'clients', (state.clients||[]).map(c => [c.id,c.plate,c.name,c.phone,c.plan,c.createdAt]));
@@ -109,6 +114,10 @@ function writeRows_(ss, key, rows) {
 }
 function parseSetting_(key, value) {
   if (['hourly','daily','garage','commercial'].includes(key)) return Number(value) || 0;
+  // O Sheets pode devolver uma célula de horário como Date (data base 1899).
+  if (['open','close'].includes(key) && Object.prototype.toString.call(value) === '[object Date]' && !isNaN(value.getTime())) {
+    return Utilities.formatDate(value, Session.getScriptTimeZone(), 'HH:mm');
+  }
   return String(value == null ? '' : value);
 }
 function json_(obj) {

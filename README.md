@@ -60,19 +60,3 @@ O app agora pode ler e gravar automaticamente o estado na planilha via Google Ap
 - `Code.gs` mantém as abas e cabeçalhos existentes e usa `clearContents()`, preservando a formatação da planilha.
 
 > Observação: a gravação real em uma planilha Google exige publicar o `Code.gs` no Google Apps Script. O ambiente deste pacote não consegue autenticar nem executar a sua planilha Google diretamente.
-
-
-## Publicar no GitHub Pages
-
-Este projeto usa React + Vite. **Não publique a pasta do código-fonte diretamente como site**, porque o navegador não executa os arquivos JSX do projeto. O GitHub Pages deve publicar o resultado de `npm run build`.
-
-O pacote já inclui `.github/workflows/deploy.yml`, que faz o build e publica automaticamente no GitHub Pages.
-
-Depois de enviar os arquivos para o GitHub:
-1. Vá em **Settings → Pages**.
-2. Em **Build and deployment → Source**, selecione **GitHub Actions**.
-3. Faça um `git push` na branch `main`.
-4. Abra **Actions** e aguarde o workflow **Deploy Estaciona Fácil** terminar.
-5. Em **Settings → Pages**, use a URL informada pelo GitHub.
-
-O `vite.config.js` já está com `base: './'`, portanto funciona também quando o repositório é publicado em uma URL do tipo `https://usuario.github.io/nome-do-repositorio/`.
