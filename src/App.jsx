@@ -138,9 +138,41 @@ export default function App(){
   }catch(err){setSyncStatus('error');setSyncError(err.message||'Falha ao carregar.');setNotice('Não foi possível carregar a planilha.');}
   finally{setSyncing(false);}
  };
+ const preprocessPlateImages = async file => {
+  const url=URL.createObjectURL(file);
+  try{
+    const img=await new Promise((resolve,reject)=>{const i=new Image();i.onload=()=>resolve(i);i.onerror=reject;i.src=url;});
+    const maxW=1800, scale=Math.min(2.5,Math.max(1,img.naturalWidth?maxW/img.naturalWidth:2));
+    const w=Math.max(900,Math.round(img.naturalWidth*scale)), h=Math.round(img.naturalHeight*scale);
+    const canvas=document.createElement('canvas');canvas.width=w;canvas.height=h;
+    const ctx=canvas.getContext('2d',{willReadFrequently:true});ctx.drawImage(img,0,0,w,h);
+    const src=ctx.getImageData(0,0,w,h), data=src.data;
+    for(let i=0;i<data.length;i+=4){
+      const y=(data[i]*0.299)+(data[i+1]*0.587)+(data[i+2]*0.114);
+      const v=y>145?255:y<80?0:Math.round(((y-80)/65)*255);
+      data[i]=data[i+1]=data[i+2]=v;data[i+3]=255;
+    }
+    ctx.putImageData(src,0,0);
+    const processed=await new Promise(r=>canvas.toBlob(r,'image/jpeg',0.92));
+    return [file,processed].filter(Boolean);
+  }finally{URL.revokeObjectURL(url);}
+ };
+ const extractPlateCandidates = text => {
+   const raw=(text||'').toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
+   const compact=raw.replace(/[^A-Z0-9]/g,'');
+   const variants=[raw,compact,raw.replace(/\s+/g,' '),raw.replace(/[IOQ]/g,'1')];
+   const out=[];
+   const push=x=>{const y=plateFormat(x);if(y.length===7&&!out.includes(y))out.push(y);};
+   variants.forEach(v=>{
+     const m=v.match(/[A-Z]{3}[0-9][A-Z0-9][0-9]{2}/g)||[];m.forEach(push);
+     const old=v.match(/[A-Z]{3}[0-9]{4}/g)||[];old.forEach(push);
+     for(let i=0;i<=v.length-7;i++){const chunk=v.slice(i,i+7);if(/^[A-Z0-9]{7}$/.test(chunk)&&/[A-Z]/.test(chunk)&&/[0-9]/.test(chunk))push(chunk);}
+   });
+   return out;
+ };
  const recognizePlate = async file => {
   if(!file) return;
-  setOcrBusy(true); setOcrPreview(URL.createObjectURL(file)); setNotice('Analisando a foto da placa…');
+  setOcrBusy(true); setOcrPreview(URL.createObjectURL(file)); setNotice('Melhorando a foto e procurando a placa…');
   try {
    if(!window.Tesseract){
     await new Promise((resolve,reject)=>{
@@ -149,13 +181,22 @@ export default function App(){
      const script=document.createElement('script'); script.src='https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js'; script.dataset.tesseract='1'; script.onload=resolve; script.onerror=reject; document.head.appendChild(script);
     });
    }
-   const result=await window.Tesseract.recognize(file,'eng',{logger:m=>{ if(m.status==='recognizing text' && m.progress>0.9) setNotice('Quase pronto…'); }});
-   const raw=(result.data.text||'').toUpperCase();
-   const candidates=raw.split(/\s+/).map(x=>x.replace(/[^A-Z0-9]/g,'')).filter(x=>x.length>=6&&x.length<=8);
-   const plate=candidates.find(x=>x.length===7) || candidates.sort((a,b)=>Math.abs(a.length-7)-Math.abs(b.length-7))[0] || '';
-   const formatted=plateFormat(plate);
+   const images=await preprocessPlateImages(file);
+   let candidates=[];
+   for(let i=0;i<images.length;i++){
+     setNotice(i===0?'Lendo a foto original…':'Tentando uma versão melhorada da foto…');
+     const result=await window.Tesseract.recognize(images[i],'eng',{
+       logger:m=>{ if(m.status==='recognizing text' && m.progress>0.92) setNotice('Quase pronto…'); },
+       tessedit_char_whitelist:'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789',
+       preserve_interword_spaces:'0',
+       psm:7
+     });
+     candidates=[...candidates,...extractPlateCandidates(result.data.text)];
+     if(candidates.length)break;
+   }
+   const formatted=candidates[0]||'';
    if(formatted.length===7){ setPlate(formatted); setNotice(`Placa reconhecida: ${formatted}. Confira antes de registrar.`); }
-   else setNotice('Não consegui identificar a placa. Tente uma foto mais próxima, bem iluminada e sem reflexo.');
+   else setNotice('Não consegui localizar a placa. Fotografe de frente, mais perto, com boa luz e sem reflexo.');
   } catch(err) {
    setNotice('Não foi possível ler a foto. Você ainda pode digitar a placa.');
   } finally { setOcrBusy(false); setOcrPreview(''); }
@@ -167,7 +208,7 @@ export default function App(){
  const totalsByType=useMemo(()=>({hourly:history.filter(x=>x.chargeType==='Rotativo').reduce((s,x)=>s+x.total,0),daily:history.filter(x=>x.chargeType==='Diária').reduce((s,x)=>s+x.total,0)}),[history]);
  return <div className="app-shell"><aside className="sidebar"><div className="brand"><div className="brand-icon"><ParkingCircle size={27}/></div><div><strong>ESTACIONA</strong><span>FÁCIL · ROTATIVO</span></div></div><div className="side-caption">MENU PRINCIPAL</div><nav>{nav.map(([id,label,Icon])=><button key={id} className={`nav-item ${tab===id?'active':''}`} onClick={()=>{setTab(id);setSearch('')}}><Icon size={18}/><span>{label}</span>{id==='settings'&&<LockKeyhole size={13} className="lock"/>}</button>)}</nav><div className="sidebar-bottom"><div className="status-dot"/> Sistema operacional <span className="version">v0.2</span></div></aside>
  <main className="main"><header className="topbar"><div><div className="eyebrow">CONTROLE DE ESTACIONAMENTO</div><h1>{nav.find(n=>n[0]===tab)?.[1]||'PDV / Operação'}</h1></div><div className="top-right"><span className="today-label">{new Date().toLocaleDateString('pt-BR',{weekday:'short',day:'2-digit',month:'short',year:'numeric'})}</span><div className="avatar">OP</div></div></header>
- {tab==='pdv'&&<><div className="welcome"><div><h2>Vamos atender o próximo veículo.</h2><p>Registre a entrada pela placa. O sistema cuida do tempo e do cálculo.</p></div><div className="live-pill"><span/> OPERAÇÃO ATIVA</div></div><div className="stats-grid"><Stat icon={CarFront} label="Veículos no pátio" value={active.length} tone="blue"/><Stat icon={CircleDollarSign} label="Faturamento hoje" value={money(totalToday)} tone="green"/><Stat icon={CheckCircle2} label="Saídas hoje" value={todayHistory.length} tone="purple"/></div><div className="work-grid"><section className="panel entry-panel"><div className="panel-heading"><div><h3>Registrar entrada</h3><p>Preencha a placa para iniciar a contagem.</p></div><span className="step-badge">01</span></div><label className="field-label">PLACA DO VEÍCULO</label><div className="plate-input-wrap"><CarFront size={22}/><input value={plate} onChange={e=>setPlate(plateFormat(e.target.value))} onKeyDown={e=>e.key==='Enter'&&start()} placeholder="ABC1D23" maxLength={7}/><span>{plate.length}/7</span><button type="button" className="camera-btn" onClick={()=>platePhotoRef.current?.click()} title="Fotografar placa"><Camera size={21}/></button></div><input ref={platePhotoRef} type="file" accept="image/*" capture="environment" onChange={onPlatePhoto} hidden/><div className="camera-helper"><ScanLine size={13}/> No celular, toque na câmera para fotografar a placa e preencher automaticamente.</div><div className="field-row"><div><label className="field-label">NOME DO CLIENTE <em>OPCIONAL</em></label><input className="text-input" value={clientName} onChange={e=>setClientName(e.target.value)} placeholder="Nome do cliente"/></div><div><label className="field-label">TELEFONE <em>OPCIONAL</em></label><input className="text-input" value={clientPhone} onChange={e=>setClientPhone(e.target.value)} placeholder="(00) 00000-0000"/></div></div><label className="field-label">MODALIDADE DE COBRANÇA</label><div className="type-options"><button className={kind==='hourly'?'selected':''} onClick={()=>setKind('hourly')}><Clock3 size={18}/><span><b>Rotativo</b><small>R$ {Number(settings.hourly).toFixed(2).replace('.',',')} / hora</small></span></button><button className={kind==='daily'?'selected':''} onClick={()=>setKind('daily')}><ParkingCircle size={18}/><span><b>Diária</b><small>{money(settings.daily)} · 8h–18h</small></span></button></div><button className="primary-btn start-btn" onClick={start}><Plus size={19}/> Registrar entrada <span>→</span></button><p className="helper"><LockKeyhole size={13}/> Mensalistas cadastrados são identificados automaticamente pela placa.</p></section>
+ {tab==='pdv'&&<><div className="welcome"><div><h2>Vamos atender o próximo veículo.</h2><p>Registre a entrada pela placa. O sistema cuida do tempo e do cálculo.</p></div><div className="live-pill"><span/> OPERAÇÃO ATIVA</div></div><div className="stats-grid"><Stat icon={CarFront} label="Veículos no pátio" value={active.length} tone="blue"/><Stat icon={CircleDollarSign} label="Faturamento hoje" value={money(totalToday)} tone="green"/><Stat icon={CheckCircle2} label="Saídas hoje" value={todayHistory.length} tone="purple"/></div><div className="work-grid"><section className="panel entry-panel"><div className="panel-heading"><div><h3>Registrar entrada</h3><p>Preencha a placa para iniciar a contagem.</p></div><span className="step-badge">01</span></div><label className="field-label">PLACA DO VEÍCULO</label><div className="plate-input-wrap"><CarFront size={22}/><input value={plate} onChange={e=>setPlate(plateFormat(e.target.value))} onKeyDown={e=>e.key==='Enter'&&start()} placeholder="ABC1D23" maxLength={7}/><span>{plate.length}/7</span><button type="button" className="camera-btn" onClick={()=>platePhotoRef.current?.click()} title="Fotografar placa"><Camera size={21}/></button></div><input ref={platePhotoRef} type="file" accept="image/*" capture="environment" onChange={onPlatePhoto} hidden/><div className="camera-helper"><ScanLine size={13}/> No celular, enquadre somente a placa, de frente, ocupando boa parte da foto. Evite reflexo e sombra.</div><div className="field-row"><div><label className="field-label">NOME DO CLIENTE <em>OPCIONAL</em></label><input className="text-input" value={clientName} onChange={e=>setClientName(e.target.value)} placeholder="Nome do cliente"/></div><div><label className="field-label">TELEFONE <em>OPCIONAL</em></label><input className="text-input" value={clientPhone} onChange={e=>setClientPhone(e.target.value)} placeholder="(00) 00000-0000"/></div></div><label className="field-label">MODALIDADE DE COBRANÇA</label><div className="type-options"><button className={kind==='hourly'?'selected':''} onClick={()=>setKind('hourly')}><Clock3 size={18}/><span><b>Rotativo</b><small>R$ {Number(settings.hourly).toFixed(2).replace('.',',')} / hora</small></span></button><button className={kind==='daily'?'selected':''} onClick={()=>setKind('daily')}><ParkingCircle size={18}/><span><b>Diária</b><small>{money(settings.daily)} · 8h–18h</small></span></button></div><button className="primary-btn start-btn" onClick={start}><Plus size={19}/> Registrar entrada <span>→</span></button><p className="helper"><LockKeyhole size={13}/> Mensalistas cadastrados são identificados automaticamente pela placa.</p></section>
  <section className="panel yard-panel"><div className="panel-heading"><div><h3>Veículos no pátio <span className="count-chip">{active.length}</span></h3><p>Tempo atualizado ao consultar ou finalizar.</p></div><div className="searchbox"><Search size={16}/><input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Buscar placa..."/></div></div>{filteredActive.length===0?<div className="empty-state"><div className="empty-icon"><CarFront size={29}/></div><b>Nenhum veículo encontrado</b><p>Os veículos registrados aparecerão aqui.</p></div>:<div className="vehicle-list">{filteredActive.map(v=>{const c=calc(v);return <div className="vehicle-row" key={v.id}><div className="vehicle-symbol"><CarFront size={20}/></div><div className="vehicle-info"><strong>{v.plate}</strong><span>{v.customerName||'Cliente avulso'} · {v.kind==='monthly'?'Mensalista':v.kind==='daily'?'Diária':'Rotativo'}</span></div><div className="elapsed"><b>{duration(c.mins)}</b><span>Entrada {fmtTime(v.entryAt)}</span></div><button className="finish-btn" onClick={()=>beginCheckout(v)}>Finalizar <span>→</span></button></div>})}</div>}<div className="yard-footer"><span><span className="mini-dot"/> Contagem iniciada no registro de entrada</span><span>Atualizado em tempo real ao operar</span></div></section></div></>}
  {tab==='vehicles'&&<section className="panel full-panel"><div className="panel-heading"><div><h3>Veículos cadastrados</h3><p>Cadastro básico por placa; dados pessoais são opcionais.</p></div><button className="primary-btn compact" onClick={()=>setModal('vehicle')}><Plus size={16}/> Novo cadastro</button></div><div className="searchbox wide"><Search size={16}/><input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Buscar por placa ou nome..."/></div><div className="table-wrap"><table><thead><tr><th>PLACA</th><th>CLIENTE</th><th>TELEFONE</th><th>PLANO</th></tr></thead><tbody>{clients.filter(c=>(c.plate+' '+c.name+' '+c.phone).toLowerCase().includes(search.toLowerCase())).map(c=><tr key={c.id}><td><b className="plate-chip">{c.plate}</b></td><td>{c.name}</td><td>{c.phone||'—'}</td><td><span className="plan-chip">{c.plan==='garage'?'Mensal · Garagem':'Mensal · Comercial'}</span></td></tr>)}</tbody></table>{clients.length===0&&<div className="empty-inline">Nenhum cadastro ainda.</div>}</div></section>}
  {tab==='monthly'&&<section className="panel full-panel"><div className="panel-heading"><div><h3>Mensalistas</h3><p>Planos reconhecidos automaticamente pela placa.</p></div><button className="primary-btn compact" onClick={()=>setModal('vehicle')}><Plus size={16}/> Cadastrar mensalista</button></div><div className="monthly-cards"><div className="monthly-card"><span>GARAGEM</span><strong>{money(settings.garage)}<small>/mês</small></strong><p>Acesso integral conforme contrato.</p></div><div className="monthly-card commercial"><span>HORÁRIO COMERCIAL</span><strong>{money(settings.commercial)}<small>/mês</small></strong><p>Utilização das {settings.open} às {settings.close}.</p></div></div><div className="table-wrap"><table><thead><tr><th>PLACA</th><th>NOME</th><th>TELEFONE</th><th>PLANO</th></tr></thead><tbody>{clients.map(c=><tr key={c.id}><td><b className="plate-chip">{c.plate}</b></td><td>{c.name}</td><td>{c.phone||'—'}</td><td>{c.plan==='garage'?'Garagem':'Horário comercial'}</td></tr>)}</tbody></table>{clients.length===0&&<div className="empty-inline">Cadastre os mensalistas para reconhecê-los pela placa.</div>}</div></section>}
