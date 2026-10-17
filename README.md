@@ -60,3 +60,8 @@ O app agora pode ler e gravar automaticamente o estado na planilha via Google Ap
 - `Code.gs` mantém as abas e cabeçalhos existentes e usa `clearContents()`, preservando a formatação da planilha.
 
 > Observação: a gravação real em uma planilha Google exige publicar o `Code.gs` no Google Apps Script. O ambiente deste pacote não consegue autenticar nem executar a sua planilha Google diretamente.
+
+## Controle de cobranças
+A versão inclui a aba `Pagamentos` no Google Sheets. No cadastro de mensalista, informe o dia de vencimento. A área `Cobranças` gera as mensalidades por mês, mostra pagos/pendentes/em atraso, registra o pagamento e permite imprimir/gerar PDF do recibo.
+
+Após atualizar o `Code.gs` no Apps Script, execute `setupEstacionaFacil()` uma vez para criar a aba `Pagamentos` (se ainda não existir) e depois publique uma nova versão da implantação.
