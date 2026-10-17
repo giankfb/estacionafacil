@@ -7,7 +7,7 @@ const APP_TOKEN = 'TROQUE_POR_UMA_CHAVE_LONGA_E_EXCLUSIVA';
 const SHEETS = {
   settings: { name: 'Configuracoes', headers: ['chave', 'valor'] },
   clients: { name: 'Mensalistas', headers: ['id', 'placa', 'nome', 'telefone', 'plano', 'diaVencimento', 'criadoEm'] },
-  payments: { name: 'Pagamentos', headers: ['id', 'clientId', 'placa', 'nome', 'referencia', 'vencimento', 'valor', 'status', 'pagoEm', 'formaPagamento'] },
+  payments: { name: 'Pagamentos', headers: ['id', 'clientId', 'placa', 'nome', 'referencia', 'vencimento', 'valor', 'status', 'valorRecebido', 'pagoEm', 'formaPagamento', 'historicoRecebimentos'] },
   active: { name: 'EmAndamento', headers: ['id', 'placa', 'nomeCliente', 'telefone', 'modalidade', 'plano', 'entradaEm'] },
   history: { name: 'Movimentacoes', headers: ['id', 'placa', 'nomeCliente', 'telefone', 'modalidade', 'plano', 'entradaEm', 'saidaEm', 'minutos', 'valorBruto', 'desconto', 'total', 'pagamento', 'tipoCobranca'] }
 };
@@ -66,7 +66,7 @@ function readState_() {
   return {
     settings,
     clients: readRows_(ss, 'clients').map(r => { const legacyCreated=(r[6]||'') ? r[6] : (typeof r[5]==='string' ? r[5] : ''); const n=Number(r[5]); const dueDay=(n>=1&&n<=31)?n:10; return { id:r[0], plate:r[1], name:r[2], phone:r[3], plan:r[4], dueDay, createdAt:legacyCreated }; }),
-    payments: readRows_(ss, 'payments').map(r => ({ id:r[0], clientId:r[1], plate:r[2], name:r[3], reference:r[4], dueDate:r[5], amount:Number(r[6])||0, status:r[7]||'pending', paidAt:r[8]||'', paymentMethod:r[9]||'' })),
+    payments: readRows_(ss, 'payments').map(r => ({ id:r[0], clientId:r[1], plate:r[2], name:r[3], reference:r[4], dueDate:r[5], amount:Number(r[6])||0, status:r[7]||'pending', paidAmount:Number(r[8])||((r[7]||'')==='paid'?Number(r[6])||0:0), paidAt:r[9]||'', paymentMethod:r[10]||'', transactions:parseJson_(r[11],[]) })),
     active: readRows_(ss, 'active').map(r => ({ id:r[0], plate:r[1], customerName:r[2], customerPhone:r[3], kind:r[4], plan:r[5] || null, entryAt:r[6] })),
     history: readRows_(ss, 'history').map(r => ({ id:r[0], plate:r[1], customerName:r[2], customerPhone:r[3], kind:r[4], plan:r[5] || null, entryAt:r[6], exitAt:r[7], minutes:Number(r[8])||0, gross:Number(r[9])||0, discount:Number(r[10])||0, total:Number(r[11])||0, payment:r[12], chargeType:r[13] }))
   };
@@ -88,7 +88,7 @@ function saveState_(state) {
       if (rows.length) sh.getRange(2,1,rows.length,2).setValues(rows);
     }
     writeRows_(ss, 'clients', (state.clients||[]).map(c => [c.id,c.plate,c.name,c.phone,c.plan,Number(c.dueDay)||10,c.createdAt]));
-    writeRows_(ss, 'payments', (state.payments||[]).map(p => [p.id,p.clientId,p.plate,p.name,p.reference,p.dueDate,p.amount,p.status,p.paidAt,p.paymentMethod]));
+    writeRows_(ss, 'payments', (state.payments||[]).map(p => [p.id,p.clientId,p.plate,p.name,p.reference,p.dueDate,p.amount,p.status,Number(p.paidAmount)||0,p.paidAt||'',p.paymentMethod||'',JSON.stringify(p.transactions||[])]));
     writeRows_(ss, 'active', (state.active||[]).map(v => [v.id,v.plate,v.customerName,v.customerPhone,v.kind,v.plan||'',v.entryAt]));
     writeRows_(ss, 'history', (state.history||[]).map(x => [x.id,x.plate,x.customerName,x.customerPhone,x.kind,x.plan||'',x.entryAt,x.exitAt,x.minutes,x.gross,x.discount,x.total,x.payment,x.chargeType]));
   } finally { lock.releaseLock(); }
@@ -122,6 +122,9 @@ function parseSetting_(key, value) {
     return Utilities.formatDate(value, Session.getScriptTimeZone(), 'HH:mm');
   }
   return String(value == null ? '' : value);
+}
+function parseJson_(value, fallback) {
+  try { return value ? JSON.parse(String(value)) : fallback; } catch (err) { return fallback; }
 }
 function json_(obj) {
   return ContentService.createTextOutput(JSON.stringify(obj)).setMimeType(ContentService.MimeType.JSON);
