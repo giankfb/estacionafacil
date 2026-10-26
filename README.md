@@ -62,3 +62,11 @@ O app agora pode ler e gravar automaticamente o estado na planilha via Google Ap
 - A compilação completa não foi confirmada neste ambiente porque a instalação de dependências excedeu o tempo disponível. Teste localmente com `npm install` e `npm run build` antes de publicar.
 
 > Observação: a gravação real em uma planilha Google exige publicar o `Code.gs` no Google Apps Script. O ambiente deste pacote não consegue autenticar nem executar a sua planilha Google diretamente.
+
+
+## Preenchimento de placa por voz
+- No PDV, toque no ícone de microfone ao lado do campo da placa.
+- Dite as letras e os números separadamente (por exemplo: “A, B, C, um, D, dois, três”).
+- O sistema preenche a placa para conferência; não registra a entrada automaticamente.
+- É necessário permitir o microfone e usar um navegador/dispositivo compatível com Web Speech API. O Chrome costuma oferecer melhor compatibilidade. Se o reconhecimento não estiver disponível, digite a placa manualmente.
+- O reconhecimento de voz pode depender de conexão com a internet e pode confundir caracteres parecidos; sempre confira a placa reconhecida.
