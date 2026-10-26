@@ -1,7 +1,20 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { CarFront, Gauge, Users, History, ChartNoAxesCombined, Settings, LockKeyhole, Search, Plus, LogOut, Clock3, CircleDollarSign, CheckCircle2, X, ParkingCircle, CreditCard, Banknote, Smartphone, Trash2 } from 'lucide-react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { CarFront, Gauge, Users, History, ChartNoAxesCombined, Settings, LockKeyhole, Search, Plus, LogOut, Clock3, CircleDollarSign, CheckCircle2, X, ParkingCircle, CreditCard, Banknote, Smartphone, Trash2, Camera, ScanLine, LoaderCircle } from 'lucide-react';
 
 const DEFAULTS = { hourly: 6, daily: 40, garage: 400, commercial: 200, open: '08:00', close: '18:00', adminPassword: '1234' };
+const API_DEFAULTS = { url: '', token: '' };
+const apiRead = () => read('ef_api', API_DEFAULTS);
+const apiRequest = async (url, options={}) => {
+ const controller = new AbortController();
+ const timer = setTimeout(() => controller.abort(), 12000);
+ try {
+  const res = await fetch(url, { ...options, signal: controller.signal });
+  const text = await res.text();
+  let data; try { data = JSON.parse(text); } catch { throw new Error('Resposta inválida do servidor.'); }
+  if (!res.ok || data.ok === false) throw new Error(data.error || `Erro HTTP ${res.status}`);
+  return data;
+ } finally { clearTimeout(timer); }
+};
 const money = n => Number(n || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 const read = (key, fallback) => { try { const v = localStorage.getItem(key); return v ? JSON.parse(v) : fallback; } catch { return fallback; } };
 const plateFormat = s => s.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 7);
@@ -9,6 +22,16 @@ const minutesBetween = (a,b) => Math.max(0, Math.floor((new Date(b).getTime()-ne
 const duration = mins => `${Math.floor(mins/60)}h ${String(mins%60).padStart(2,'0')}min`;
 const fmtTime = iso => new Date(iso).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});
 const fmtDate = iso => new Date(iso).toLocaleDateString('pt-BR');
+const normalizeTime = value => {
+ if (!value) return '';
+ const s=String(value);
+ const m=s.match(/(?:^|\s)(\d{1,2}):(\d{2})(?::\d{2})?/);
+ if(m) return `${String(m[1]).padStart(2,'0')}:${m[2]}`;
+ const d=new Date(value);
+ if(!Number.isNaN(d.getTime())) return d.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});
+ return s;
+};
+const normalizeSettings = s => s ? ({...DEFAULTS,...s,open:normalizeTime(s.open)||DEFAULTS.open,close:normalizeTime(s.close)||DEFAULTS.close}) : DEFAULTS;
 
 export default function App(){
  const [tab,setTab]=useState('pdv');
@@ -16,21 +39,64 @@ export default function App(){
  const [active,setActive]=useState(()=>read('ef_active',[]));
  const [clients,setClients]=useState(()=>read('ef_clients',[]));
  const [history,setHistory]=useState(()=>read('ef_history',[]));
- const [monthlyPayments,setMonthlyPayments]=useState(()=>read('ef_monthly_payments',[]));
- const [monthFilter,setMonthFilter]=useState(new Date().toISOString().slice(0,7));
- const [paymentMethodFilter,setPaymentMethodFilter]=useState('Todos');
- const [reportType,setReportType]=useState('pending');
- const [monthlyStatusFilter,setMonthlyStatusFilter]=useState('Todos');
- const [dueDate,setDueDate]=useState('');
- const [payingId,setPayingId]=useState(null); const [paidAt,setPaidAt]=useState(new Date().toISOString().slice(0,10)); const [monthlyPaymentMethod,setMonthlyPaymentMethod]=useState('Pix');
+ const [api,setApi]=useState(()=>apiRead());
+ const [syncing,setSyncing]=useState(false);
+ const [syncStatus,setSyncStatus]=useState('local');
+ const [syncError,setSyncError]=useState('');
+ const [remoteLoaded,setRemoteLoaded]=useState(false);
  const [plate,setPlate]=useState(''); const [clientName,setClientName]=useState(''); const [clientPhone,setClientPhone]=useState('');
  const [kind,setKind]=useState('hourly'); const [search,setSearch]=useState(''); const [checkout,setCheckout]=useState(null); const [discount,setDiscount]=useState('0'); const [payment,setPayment]=useState('Pix');
  const [modal,setModal]=useState(''); const [password,setPassword]=useState(''); const [unlocked,setUnlocked]=useState(false); const [notice,setNotice]=useState('');
+ const [ocrBusy,setOcrBusy]=useState(false); const [ocrPreview,setOcrPreview]=useState('');
+ const [cameraOpen,setCameraOpen]=useState(false);
+ const platePhotoRef=useRef(null); const cameraVideoRef=useRef(null); const cameraStreamRef=useRef(null);
  useEffect(()=>localStorage.setItem('ef_settings',JSON.stringify(settings)),[settings]);
  useEffect(()=>localStorage.setItem('ef_active',JSON.stringify(active)),[active]);
  useEffect(()=>localStorage.setItem('ef_clients',JSON.stringify(clients)),[clients]);
  useEffect(()=>localStorage.setItem('ef_history',JSON.stringify(history)),[history]);
- useEffect(()=>localStorage.setItem('ef_monthly_payments',JSON.stringify(monthlyPayments)),[monthlyPayments]);
+ useEffect(()=>localStorage.setItem('ef_api',JSON.stringify(api)),[api]);
+
+ // Carrega a planilha uma vez ao iniciar. Se a integração não estiver configurada,
+ // o sistema continua funcionando normalmente com os dados locais.
+ useEffect(()=>{
+  let cancelled=false;
+  const loadRemote=async()=>{
+   if(!api.url){setRemoteLoaded(true);return;}
+   setSyncing(true); setSyncStatus('loading'); setSyncError('');
+   try{
+    const data=await apiRequest(`${api.url}${api.url.includes('?')?'&':'?'}action=read`);
+    if(cancelled)return;
+    const s=data.state||{};
+    if(s.settings)setSettings(normalizeSettings(s.settings));
+    if(Array.isArray(s.clients))setClients(s.clients);
+    if(Array.isArray(s.active))setActive(s.active);
+    if(Array.isArray(s.history))setHistory(s.history);
+    setSyncStatus('online'); setNotice('Dados carregados da planilha.');
+   }catch(err){
+    if(!cancelled){setSyncStatus('error');setSyncError(err.message||'Falha ao carregar a planilha.');}
+   }finally{if(!cancelled){setSyncing(false);setRemoteLoaded(true);}}
+  };
+  loadRemote();
+  return()=>{cancelled=true};
+ },[api.url]);
+
+ // Depois do carregamento remoto, envia alterações para a planilha com pequeno debounce.
+ useEffect(()=>{
+  if(!api.url || !api.token || !remoteLoaded)return;
+  const timer=setTimeout(async()=>{
+   setSyncing(true); setSyncError('');
+   try{
+    await apiRequest(api.url,{method:'POST',body:JSON.stringify({
+      token:api.token, action:'save',
+      state:{settings,clients,active,history}
+    })});
+    setSyncStatus('online');
+   }catch(err){setSyncStatus('error');setSyncError(err.message||'Falha ao salvar na planilha.');}
+   finally{setSyncing(false);}
+  },900);
+  return()=>clearTimeout(timer);
+ },[api.url,api.token,remoteLoaded,settings,clients,active,history]);
+
  useEffect(()=>{ if(!notice)return; const t=setTimeout(()=>setNotice(''),3500);return()=>clearTimeout(t)},[notice]);
  const today = new Date().toLocaleDateString('pt-BR');
  const todayHistory=history.filter(x=>fmtDate(x.exitAt)===today);
@@ -49,40 +115,138 @@ export default function App(){
  const calc = v => { const mins=minutesBetween(v.entryAt,new Date().toISOString()); if(v.kind==='monthly') return {mins,gross:0,label:'Incluído na mensalidade'}; if(v.kind==='daily') return {mins,gross:settings.daily,label:'Diária (8h às 18h)'}; return {mins,gross:mins/60*settings.hourly,label:'Proporcional por minuto'}; };
  const beginCheckout=v=>{setCheckout(v);setDiscount('0');setPayment('Pix');};
  const finish=()=>{if(!checkout)return; const c=calc(checkout); const d=Math.max(0,Math.min(c.gross,Number(String(discount).replace(',','.'))||0)); const item={...checkout,exitAt:new Date().toISOString(),minutes:c.mins,gross:c.gross,discount:d,total:c.gross-d,payment,chargeType:checkout.kind==='monthly'?'Mensalista':checkout.kind==='daily'?'Diária':'Rotativo'};setHistory(h=>[item,...h]);setActive(a=>a.filter(v=>v.id!==checkout.id));setCheckout(null);setNotice(`Saída finalizada. Total: ${money(item.total)}`);};
- const addClient=()=>{const p=plateFormat(document.getElementById('cplate')?.value||'');const name=document.getElementById('cname')?.value?.trim()||'';const phone=document.getElementById('cphone')?.value?.trim()||'';const plan=document.getElementById('cplan')?.value||'garage';if(p.length!==7){setNotice('Informe uma placa válida com 7 caracteres.');return;}setClients(cs=>[{id:crypto.randomUUID(),plate:p,name,phone,plan,createdAt:new Date().toISOString()},...cs.filter(c=>c.plate!==p)]);setModal('');setNotice('Mensalista cadastrado com sucesso.');};
- const nav=[['pdv','PDV / Operação',Gauge],['monthly','Mensalistas',Users],['history','Movimentações',History],['reports','Relatórios',ChartNoAxesCombined],['settings','Configurações',Settings]];
+ const addClient=()=>{const p=plateFormat(document.getElementById('cplate')?.value||'');const name=document.getElementById('cname')?.value?.trim()||'';const phone=document.getElementById('cphone')?.value?.trim()||'';const plan=document.getElementById('cplan')?.value||'garage';if(p.length!==7||!name){setNotice('Informe uma placa válida e o nome do mensalista.');return;}setClients(cs=>[{id:crypto.randomUUID(),plate:p,name,phone,plan,createdAt:new Date().toISOString()},...cs.filter(c=>c.plate!==p)]);setModal('');setNotice('Mensalista cadastrado com sucesso.');};
+ const syncNow=async()=>{
+  if(!api.url||!api.token){setNotice('Configure a URL do Apps Script e o token antes de sincronizar.');return;}
+  setSyncing(true);setSyncError('');
+  try{
+   await apiRequest(api.url,{method:'POST',body:JSON.stringify({token:api.token,action:'save',state:{settings,clients,active,history}})});
+   setSyncStatus('online');setNotice('Planilha atualizada com sucesso.');
+  }catch(err){setSyncStatus('error');setSyncError(err.message||'Falha ao salvar na planilha.');setNotice('Não foi possível atualizar a planilha.');}
+  finally{setSyncing(false);}
+ };
+ const loadNow=async()=>{
+  if(!api.url){setNotice('Configure a URL do Apps Script antes de carregar.');return;}
+  setSyncing(true);setSyncError('');
+  try{
+   const data=await apiRequest(`${api.url}${api.url.includes('?')?'&':'?'}action=read`);
+   const s=data.state||{};
+   if(s.settings)setSettings(normalizeSettings(s.settings));
+   if(Array.isArray(s.clients))setClients(s.clients);
+   if(Array.isArray(s.active))setActive(s.active);
+   if(Array.isArray(s.history))setHistory(s.history);
+   setSyncStatus('online');setNotice('Dados recarregados da planilha.');
+  }catch(err){setSyncStatus('error');setSyncError(err.message||'Falha ao carregar.');setNotice('Não foi possível carregar a planilha.');}
+  finally{setSyncing(false);}
+ };
+ const loadTesseract = async () => {
+  if(window.Tesseract) return;
+  await new Promise((resolve,reject)=>{
+   const existing=document.querySelector('script[data-tesseract]');
+   if(existing){existing.addEventListener('load',resolve,{once:true});existing.addEventListener('error',reject,{once:true});return;}
+   const script=document.createElement('script'); script.src='https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js'; script.dataset.tesseract='1'; script.onload=resolve; script.onerror=reject; document.head.appendChild(script);
+  });
+ };
+ const imageFromSource = async source => {
+  const url=typeof source==='string'?source:URL.createObjectURL(source);
+  try{
+   const img=await new Promise((resolve,reject)=>{const i=new Image();i.onload=()=>resolve(i);i.onerror=reject;i.src=url;});
+   const baseW=Math.max(1200,Math.min(2200,img.naturalWidth||1600));
+   const scale=baseW/(img.naturalWidth||baseW); const bw=Math.round((img.naturalWidth||baseW)*scale), bh=Math.round((img.naturalHeight||1200)*scale);
+   const make=(sx,sy,sw,sh,mode='normal')=>{
+    const canvas=document.createElement('canvas'); canvas.width=Math.max(900,Math.round(sw*scale)); canvas.height=Math.max(300,Math.round(sh*scale));
+    const ctx=canvas.getContext('2d',{willReadFrequently:true}); ctx.imageSmoothingEnabled=true; ctx.imageSmoothingQuality='high';
+    ctx.drawImage(img,sx,sy,sw,sh,0,0,canvas.width,canvas.height);
+    if(mode!=='normal'){
+     const im=ctx.getImageData(0,0,canvas.width,canvas.height), d=im.data;
+     for(let i=0;i<d.length;i+=4){const y=d[i]*.299+d[i+1]*.587+d[i+2]*.114; let v=mode==='bw'?(y>145?255:0):(y-128)*1.65+128; v=Math.max(0,Math.min(255,v)); d[i]=d[i+1]=d[i+2]=v;}
+     ctx.putImageData(im,0,0);
+    }
+    return new Promise(r=>canvas.toBlob(r,'image/jpeg',.94));
+   };
+   const full=make(0,0,img.naturalWidth,img.naturalHeight,'normal');
+   const center=make(img.naturalWidth*.08,img.naturalHeight*.28,img.naturalWidth*.84,img.naturalHeight*.44,'normal');
+   const centerWide=make(img.naturalWidth*.03,img.naturalHeight*.18,img.naturalWidth*.94,img.naturalHeight*.64,'normal');
+   const centerBw=make(img.naturalWidth*.03,img.naturalHeight*.18,img.naturalWidth*.94,img.naturalHeight*.64,'bw');
+   const centerContrast=make(img.naturalWidth*.03,img.naturalHeight*.18,img.naturalWidth*.94,img.naturalHeight*.64,'contrast');
+   return [full,center,centerWide,centerBw,centerContrast].filter(Boolean);
+  } finally { if(typeof source!=='string') URL.revokeObjectURL(url); }
+ };
+ const preprocessPlateImages = file => imageFromSource(file);
+ const extractPlateCandidates = text => {
+   const raw=(text||'').toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
+   const compact=raw.replace(/[^A-Z0-9]/g,'');
+   const out=[];
+   const push=x=>{const y=plateFormat(x);if(y.length===7&&!out.includes(y))out.push(y);};
+   [raw,compact].forEach(v=>{
+    (v.match(/[A-Z]{3}[0-9][A-Z0-9][0-9]{2}/g)||[]).forEach(push);
+    (v.match(/[A-Z]{3}[0-9]{4}/g)||[]).forEach(push);
+    for(let i=0;i<=v.length-7;i++){const chunk=v.slice(i,i+7);if(/^[A-Z0-9]{7}$/.test(chunk)&&/[A-Z]{2,}/.test(chunk)&&/[0-9]{2,}/.test(chunk))push(chunk);}
+   });
+   return out;
+ };
+ const scoreCandidate = (plate,confidence) => {
+   const merc=/^[A-Z]{3}[0-9][A-Z0-9][0-9]{2}$/.test(plate);
+   const old=/^[A-Z]{3}[0-9]{4}$/.test(plate);
+   if(!merc&&!old) return -1;
+   return Math.min(100,Number(confidence)||0)+(merc?8:0);
+ };
+ const recognizePlate = async file => {
+  if(!file) return;
+  setOcrBusy(true); setOcrPreview(URL.createObjectURL(file)); setNotice('Preparando a foto da placa…');
+  try {
+   await loadTesseract();
+   const images=await preprocessPlateImages(file); let best=null;
+   for(let i=0;i<images.length;i++){
+    setNotice(i<2?'Procurando a placa na imagem…':`Tentativa ${i-1} de 3 com imagem tratada…`);
+    const result=await window.Tesseract.recognize(images[i],'eng',{tessedit_char_whitelist:'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789',preserve_interword_spaces:'0',psm:7});
+    const conf=Number(result?.data?.confidence)||0;
+    for(const candidate of extractPlateCandidates(result?.data?.text||'')){const score=scoreCandidate(candidate,conf);if(score>=0&&(!best||score>best.score))best={plate:candidate,score,confidence:conf};}
+    if(best&&best.score>=65) break;
+   }
+   if(best && best.confidence>=45){setPlate(best.plate);setNotice(`Placa sugerida: ${best.plate}. Confira na foto antes de registrar.`);}
+   else setNotice('Não consegui identificar a placa com segurança. Confira a foto e digite a placa manualmente.');
+  } catch(err) { setNotice('Não foi possível ler a foto. Você ainda pode digitar a placa.'); }
+  finally { setOcrBusy(false); setOcrPreview(''); }
+ };
+ const openCamera = async () => {
+  try {
+   if(!navigator.mediaDevices?.getUserMedia) throw new Error('camera');
+   const stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'},width:{ideal:1920},height:{ideal:1080}},audio:false});
+   cameraStreamRef.current=stream; setCameraOpen(true);
+   setTimeout(()=>{if(cameraVideoRef.current){cameraVideoRef.current.srcObject=stream;cameraVideoRef.current.play().catch(()=>{});}},50);
+  } catch { setNotice('Não foi possível abrir a câmera. Verifique a permissão do navegador e tente novamente.'); }
+ };
+ const closeCamera = () => { cameraStreamRef.current?.getTracks().forEach(t=>t.stop()); cameraStreamRef.current=null; setCameraOpen(false); };
+ const captureCamera = async () => {
+  const video=cameraVideoRef.current; if(!video||!video.videoWidth) return;
+  const canvas=document.createElement('canvas'); canvas.width=video.videoWidth; canvas.height=video.videoHeight; canvas.getContext('2d').drawImage(video,0,0);
+  const blob=await new Promise(r=>canvas.toBlob(r,'image/jpeg',.95)); closeCamera(); if(blob) await recognizePlate(blob);
+ };
+ const onPlatePhoto=e=>{ const file=e.target.files?.[0]; if(file) recognizePlate(file); e.target.value=''; };
+
+
+ const nav=[['pdv','PDV / Operação',Gauge],['vehicles','Veículos',CarFront],['monthly','Mensalistas',Users],['history','Movimentações',History],['reports','Relatórios',ChartNoAxesCombined],['settings','Configurações',Settings]];
  const filteredActive=active.filter(v=>(v.plate+' '+v.customerName).toLowerCase().includes(search.toLowerCase()));
- const totalsByType=useMemo(()=>({hourly:history.filter(x=>x.chargeType==='Rotativo').reduce((s,x)=>s+Number(x.total||0),0),daily:history.filter(x=>x.chargeType==='Diária').reduce((s,x)=>s+Number(x.total||0),0)}),[history]);
- const generateMonthlyBills=()=>{if(!dueDate){setNotice('Informe a data de vencimento das mensalidades.');return;}if(!clients.length){setNotice('Cadastre ao menos um mensalista antes de gerar as cobranças.');return;}const existing=new Set(monthlyPayments.map(x=>`${x.clientId}|${x.referenceMonth}`));const newBills=clients.filter(c=>!existing.has(`${c.id}|${monthFilter}`)).map(c=>({id:crypto.randomUUID(),clientId:c.id,plate:c.plate,customerName:c.name,plan:c.plan,referenceMonth:monthFilter,dueDate,amount:Number(c.plan==='garage'?settings.garage:settings.commercial),status:'Pendente',paidAt:'',paymentMethod:''}));if(!newBills.length){setNotice('As cobranças desse mês já foram geradas para todos os mensalistas.');return;}setMonthlyPayments(p=>[...newBills,...p]);setNotice(`${newBills.length} mensalidade(s) gerada(s) para ${monthFilter}.`);};
- const markMonthlyPaid=(id)=>{setMonthlyPayments(ps=>ps.map(x=>x.id===id?{...x,status:'Pago',paidAt:new Date(`${paidAt}T12:00:00`).toISOString(),paymentMethod:monthlyPaymentMethod}:x));setPayingId(null);setNotice('Recebimento da mensalidade registrado.');};
- const filteredBills=monthlyPayments.filter(x=>x.referenceMonth===monthFilter && (paymentMethodFilter==='Todos'||x.paymentMethod===paymentMethodFilter));
- const reportHistory=history.filter(x=>(x.exitAt||'').slice(0,7)===monthFilter && (paymentMethodFilter==='Todos'||x.payment===paymentMethodFilter));
- const reportPaidBills=monthlyPayments.filter(x=>x.status==='Pago'&&(x.paidAt||'').slice(0,7)===monthFilter&&(paymentMethodFilter==='Todos'||x.paymentMethod===paymentMethodFilter));
- const reportPendingBills=monthlyPayments.filter(x=>x.status!=='Pago'&&x.referenceMonth===monthFilter);
- const reportMonthlyReferenceBills=monthlyPayments.filter(x=>x.referenceMonth===monthFilter&&(monthlyStatusFilter==='Todos'||x.status===monthlyStatusFilter));
- const reportParkingTotal=reportHistory.reduce((sum,x)=>sum+Number(x.total||0),0); const reportMonthlyTotal=reportPaidBills.reduce((sum,x)=>sum+Number(x.amount||0),0); const reportTotal=reportParkingTotal+reportMonthlyTotal; const pendingTotal=reportPendingBills.reduce((sum,x)=>sum+Number(x.amount||0),0);
- const printReport=()=>window.print();
- const exportReportCsv=()=>{let rows=[['Tipo','Data','Referência','Placa','Nome','Modalidade/Plano','Valor bruto','Desconto','Total recebido','Pagamento','Situação','Vencimento']];if(reportType==='pending'){rows.push(...reportPendingBills.map(x=>['Mensalidade','',x.referenceMonth,x.plate,x.customerName||'',x.plan==='garage'?'Garagem':'Horário comercial',x.amount,0,0,'','Pendente',x.dueDate]));}else if(reportType==='monthly'){rows.push(...reportMonthlyReferenceBills.map(x=>['Mensalidade',x.paidAt?fmtDate(x.paidAt):'',x.referenceMonth,x.plate,x.customerName||'',x.plan==='garage'?'Garagem':'Horário comercial',x.amount,0,x.status==='Pago'?x.amount:0,x.paymentMethod||'',x.status,x.dueDate]));}else{rows.push(...reportHistory.map(x=>['Estacionamento',fmtDate(x.exitAt),'',x.plate,x.customerName||'',x.chargeType,x.gross,x.discount,x.total,x.payment,'Pago','']),...reportPaidBills.map(x=>['Mensalidade',x.paidAt?fmtDate(x.paidAt):'',x.referenceMonth,x.plate,x.customerName||'',x.plan==='garage'?'Garagem':'Horário comercial',x.amount,0,x.amount,x.paymentMethod,'Pago',x.dueDate]));}const csv='\ufeff'+rows.map(r=>r.map(v=>'"'+String(v??'').replaceAll('"','""')+'"').join(';')).join('\n');const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8;'}));a.download=`relatorio-estaciona-facil-${reportType}-${monthFilter}.csv`;a.click();URL.revokeObjectURL(a.href);};
- return <div className="app-shell"><aside className="sidebar"><div className="brand"><div className="brand-icon"><ParkingCircle size={27}/></div><div><strong>ESTACIONA</strong><span>FÁCIL · ROTATIVO</span></div></div><div className="side-caption">MENU PRINCIPAL</div><nav>{nav.map(([id,label,Icon])=><button key={id} className={`nav-item ${tab===id?'active':''}`} onClick={()=>{setTab(id);setSearch('')}}><Icon size={18}/><span>{label}</span>{id==='settings'&&<LockKeyhole size={13} className="lock"/>}</button>)}</nav><div className="sidebar-bottom"><div className="status-dot"/> Sistema operacional <span className="version">v0.1</span></div></aside>
+ const totalsByType=useMemo(()=>({hourly:history.filter(x=>x.chargeType==='Rotativo').reduce((s,x)=>s+x.total,0),daily:history.filter(x=>x.chargeType==='Diária').reduce((s,x)=>s+x.total,0)}),[history]);
+ return <div className="app-shell"><aside className="sidebar"><div className="brand"><div className="brand-icon"><ParkingCircle size={27}/></div><div><strong>ESTACIONA</strong><span>FÁCIL · ROTATIVO</span></div></div><div className="side-caption">MENU PRINCIPAL</div><nav>{nav.map(([id,label,Icon])=><button key={id} className={`nav-item ${tab===id?'active':''}`} onClick={()=>{setTab(id);setSearch('')}}><Icon size={18}/><span>{label}</span>{id==='settings'&&<LockKeyhole size={13} className="lock"/>}</button>)}</nav><div className="sidebar-bottom"><div className="status-dot"/> Sistema operacional <span className="version">v0.2</span></div></aside>
  <main className="main"><header className="topbar"><div><div className="eyebrow">CONTROLE DE ESTACIONAMENTO</div><h1>{nav.find(n=>n[0]===tab)?.[1]||'PDV / Operação'}</h1></div><div className="top-right"><span className="today-label">{new Date().toLocaleDateString('pt-BR',{weekday:'short',day:'2-digit',month:'short',year:'numeric'})}</span><div className="avatar">OP</div></div></header>
- {tab==='pdv'&&<><div className="welcome"><div><h2>Vamos atender o próximo veículo.</h2><p>Registre a entrada pela placa. O sistema cuida do tempo e do cálculo.</p></div><div className="live-pill"><span/> OPERAÇÃO ATIVA</div></div><div className="stats-grid"><Stat icon={CarFront} label="Veículos no pátio" value={active.length} tone="blue"/><Stat icon={CircleDollarSign} label="Faturamento hoje" value={money(totalToday)} tone="green"/><Stat icon={CheckCircle2} label="Saídas hoje" value={todayHistory.length} tone="purple"/></div><div className="work-grid"><section className="panel entry-panel"><div className="panel-heading"><div><h3>Registrar entrada</h3><p>Preencha a placa para iniciar a contagem.</p></div><span className="step-badge">01</span></div><label className="field-label">PLACA DO VEÍCULO</label><div className="plate-input-wrap"><CarFront size={22}/><input value={plate} onChange={e=>setPlate(plateFormat(e.target.value))} onKeyDown={e=>e.key==='Enter'&&start()} placeholder="ABC1D23" maxLength={7}/><span>{plate.length}/7</span></div><div className="field-row"><div><label className="field-label">NOME DO CLIENTE <em>OPCIONAL</em></label><input className="text-input" value={clientName} onChange={e=>setClientName(e.target.value)} placeholder="Nome do cliente"/></div><div><label className="field-label">TELEFONE <em>OPCIONAL</em></label><input className="text-input" value={clientPhone} onChange={e=>setClientPhone(e.target.value)} placeholder="(00) 00000-0000"/></div></div><label className="field-label">MODALIDADE DE COBRANÇA</label><div className="type-options"><button className={kind==='hourly'?'selected':''} onClick={()=>setKind('hourly')}><Clock3 size={18}/><span><b>Rotativo</b><small>R$ {Number(settings.hourly).toFixed(2).replace('.',',')} / hora</small></span></button><button className={kind==='daily'?'selected':''} onClick={()=>setKind('daily')}><ParkingCircle size={18}/><span><b>Diária</b><small>{money(settings.daily)} · 8h–18h</small></span></button></div><button className="primary-btn start-btn" onClick={start}><Plus size={19}/> Registrar entrada <span>→</span></button><p className="helper"><LockKeyhole size={13}/> Mensalistas cadastrados são identificados automaticamente pela placa.</p></section>
+ {tab==='pdv'&&<><div className="welcome"><div><h2>Vamos atender o próximo veículo.</h2><p>Registre a entrada pela placa. O sistema cuida do tempo e do cálculo.</p></div><div className="live-pill"><span/> OPERAÇÃO ATIVA</div></div><div className="stats-grid"><Stat icon={CarFront} label="Veículos no pátio" value={active.length} tone="blue"/><Stat icon={CircleDollarSign} label="Faturamento hoje" value={money(totalToday)} tone="green"/><Stat icon={CheckCircle2} label="Saídas hoje" value={todayHistory.length} tone="purple"/></div><div className="work-grid"><section className="panel entry-panel"><div className="panel-heading"><div><h3>Registrar entrada</h3><p>Preencha a placa para iniciar a contagem.</p></div><span className="step-badge">01</span></div><label className="field-label">PLACA DO VEÍCULO</label><div className="plate-input-wrap"><CarFront size={22}/><input value={plate} onChange={e=>setPlate(plateFormat(e.target.value))} onKeyDown={e=>e.key==='Enter'&&start()} placeholder="ABC1D23" maxLength={7}/><span>{plate.length}/7</span><button type="button" className="camera-btn" onClick={openCamera} title="Abrir câmera"><Camera size={21}/></button><button type="button" className="camera-btn secondary-camera" onClick={()=>platePhotoRef.current?.click()} title="Escolher/tirar foto"><ScanLine size={19}/></button></div><input ref={platePhotoRef} type="file" accept="image/*" capture="environment" onChange={onPlatePhoto} hidden/><div className="camera-helper"><ScanLine size={13}/> No celular, enquadre somente a placa, de frente, ocupando boa parte da foto. Evite reflexo e sombra.</div><div className="field-row"><div><label className="field-label">NOME DO CLIENTE <em>OPCIONAL</em></label><input className="text-input" value={clientName} onChange={e=>setClientName(e.target.value)} placeholder="Nome do cliente"/></div><div><label className="field-label">TELEFONE <em>OPCIONAL</em></label><input className="text-input" value={clientPhone} onChange={e=>setClientPhone(e.target.value)} placeholder="(00) 00000-0000"/></div></div><label className="field-label">MODALIDADE DE COBRANÇA</label><div className="type-options"><button className={kind==='hourly'?'selected':''} onClick={()=>setKind('hourly')}><Clock3 size={18}/><span><b>Rotativo</b><small>R$ {Number(settings.hourly).toFixed(2).replace('.',',')} / hora</small></span></button><button className={kind==='daily'?'selected':''} onClick={()=>setKind('daily')}><ParkingCircle size={18}/><span><b>Diária</b><small>{money(settings.daily)} · 8h–18h</small></span></button></div><button className="primary-btn start-btn" onClick={start}><Plus size={19}/> Registrar entrada <span>→</span></button><p className="helper"><LockKeyhole size={13}/> Mensalistas cadastrados são identificados automaticamente pela placa.</p></section>
  <section className="panel yard-panel"><div className="panel-heading"><div><h3>Veículos no pátio <span className="count-chip">{active.length}</span></h3><p>Tempo atualizado ao consultar ou finalizar.</p></div><div className="searchbox"><Search size={16}/><input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Buscar placa..."/></div></div>{filteredActive.length===0?<div className="empty-state"><div className="empty-icon"><CarFront size={29}/></div><b>Nenhum veículo encontrado</b><p>Os veículos registrados aparecerão aqui.</p></div>:<div className="vehicle-list">{filteredActive.map(v=>{const c=calc(v);return <div className="vehicle-row" key={v.id}><div className="vehicle-symbol"><CarFront size={20}/></div><div className="vehicle-info"><strong>{v.plate}</strong><span>{v.customerName||'Cliente avulso'} · {v.kind==='monthly'?'Mensalista':v.kind==='daily'?'Diária':'Rotativo'}</span></div><div className="elapsed"><b>{duration(c.mins)}</b><span>Entrada {fmtTime(v.entryAt)}</span></div><button className="finish-btn" onClick={()=>beginCheckout(v)}>Finalizar <span>→</span></button></div>})}</div>}<div className="yard-footer"><span><span className="mini-dot"/> Contagem iniciada no registro de entrada</span><span>Atualizado em tempo real ao operar</span></div></section></div></>}
-
- {tab==='monthly'&&<>
- <section className="panel full-panel monthly-list-panel"><div className="panel-heading"><div><h3>Mensalistas cadastrados</h3><p>Consulte a placa, o plano contratado e a situação da mensalidade.</p></div><button className="primary-btn compact" onClick={()=>setModal('vehicle')}><Plus size={16}/> Novo mensalista</button></div><div className="monthly-toolbar"><label>Mês de referência<input type="month" className="text-input" value={monthFilter} onChange={e=>{setMonthFilter(e.target.value);setDueDate('')}}/></label><label>Vencimento da mensalidade<input type="date" className="text-input" value={dueDate} onChange={e=>setDueDate(e.target.value)}/></label><button className="primary-btn compact" onClick={generateMonthlyBills}><Plus size={15}/> Gerar cobranças do mês</button></div><p className="monthly-hint">Gere a cobrança do mês para atualizar a situação de cada mensalista. O pagamento só entra na arrecadação depois de confirmado.</p><div className="table-wrap"><table><thead><tr><th>PLACA</th><th>MENSALISTA</th><th>PLANO</th><th>VALOR MENSAL</th><th>SITUAÇÃO · {monthFilter}</th><th>AÇÃO</th></tr></thead><tbody>{clients.map(c=>{const b=monthlyPayments.find(x=>x.clientId===c.id&&x.referenceMonth===monthFilter);return <tr key={c.id}><td><b className="plate-chip">{c.plate}</b></td><td>{c.name||'—'}{c.phone&&<div className="table-subtext">{c.phone}</div>}</td><td>{c.plan==='garage'?'Garagem':'Horário comercial'}</td><td><b>{money(c.plan==='garage'?settings.garage:settings.commercial)}</b></td><td>{b?<span className={`status-chip ${b.status==='Pago'?'paid':'pending'}`}>{b.status}</span>:<span className="status-chip pending">Não gerada</span>}{b?.status==='Pago'&&<div className="table-subtext">{b.paymentMethod} · {b.paidAt?fmtDate(b.paidAt):''}</div>}</td><td>{!b?<span className="table-subtext">Gere a cobrança do mês</span>:b.status==='Pago'?<span className="table-subtext">Pagamento registrado</span>:payingId===b.id?<div className="payment-register"><label>Data do pagamento<input type="date" className="text-input" value={paidAt} onChange={e=>setPaidAt(e.target.value)}/></label><label>Forma de pagamento<select className="text-input" value={monthlyPaymentMethod} onChange={e=>setMonthlyPaymentMethod(e.target.value)}><option>Pix</option><option>Dinheiro</option><option>Cartão</option></select></label><button className="primary-btn compact" onClick={()=>markMonthlyPaid(b.id)}>Confirmar</button><button className="secondary-btn compact" onClick={()=>setPayingId(null)}>Cancelar</button></div>:<button className="primary-btn compact" onClick={()=>{setPayingId(b.id);setPaidAt(new Date().toISOString().slice(0,10));setMonthlyPaymentMethod('Pix')}}>Registrar pagamento</button>}</td></tr>})}</tbody></table>{clients.length===0&&<div className="empty-inline">Nenhum mensalista cadastrado. Use “Novo mensalista” para começar.</div>}</div></section>
-
- </>}
-
+ {tab==='vehicles'&&<section className="panel full-panel"><div className="panel-heading"><div><h3>Veículos cadastrados</h3><p>Cadastro básico por placa; dados pessoais são opcionais.</p></div><button className="primary-btn compact" onClick={()=>setModal('vehicle')}><Plus size={16}/> Novo cadastro</button></div><div className="searchbox wide"><Search size={16}/><input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Buscar por placa ou nome..."/></div><div className="table-wrap"><table><thead><tr><th>PLACA</th><th>CLIENTE</th><th>TELEFONE</th><th>PLANO</th></tr></thead><tbody>{clients.filter(c=>(c.plate+' '+c.name+' '+c.phone).toLowerCase().includes(search.toLowerCase())).map(c=><tr key={c.id}><td><b className="plate-chip">{c.plate}</b></td><td>{c.name}</td><td>{c.phone||'—'}</td><td><span className="plan-chip">{c.plan==='garage'?'Mensal · Garagem':'Mensal · Comercial'}</span></td></tr>)}</tbody></table>{clients.length===0&&<div className="empty-inline">Nenhum cadastro ainda.</div>}</div></section>}
+ {tab==='monthly'&&<section className="panel full-panel"><div className="panel-heading"><div><h3>Mensalistas</h3><p>Planos reconhecidos automaticamente pela placa.</p></div><button className="primary-btn compact" onClick={()=>setModal('vehicle')}><Plus size={16}/> Cadastrar mensalista</button></div><div className="monthly-cards"><div className="monthly-card"><span>GARAGEM</span><strong>{money(settings.garage)}<small>/mês</small></strong><p>Acesso integral conforme contrato.</p></div><div className="monthly-card commercial"><span>HORÁRIO COMERCIAL</span><strong>{money(settings.commercial)}<small>/mês</small></strong><p>Utilização das {settings.open} às {settings.close}.</p></div></div><div className="table-wrap"><table><thead><tr><th>PLACA</th><th>NOME</th><th>TELEFONE</th><th>PLANO</th></tr></thead><tbody>{clients.map(c=><tr key={c.id}><td><b className="plate-chip">{c.plate}</b></td><td>{c.name}</td><td>{c.phone||'—'}</td><td>{c.plan==='garage'?'Garagem':'Horário comercial'}</td></tr>)}</tbody></table>{clients.length===0&&<div className="empty-inline">Cadastre os mensalistas para reconhecê-los pela placa.</div>}</div></section>}
  {tab==='history'&&<section className="panel full-panel"><div className="panel-heading"><div><h3>Movimentações</h3><p>Histórico de saídas, cobranças e descontos registrados neste dispositivo.</p></div><span className="count-chip">{history.length} registros</span></div><div className="table-wrap"><table><thead><tr><th>DATA</th><th>PLACA</th><th>MODALIDADE</th><th>TEMPO</th><th>DESCONTO</th><th>TOTAL</th><th>PAGAMENTO</th></tr></thead><tbody>{history.map(x=><tr key={x.id}><td>{fmtDate(x.exitAt)} {fmtTime(x.exitAt)}</td><td><b className="plate-chip">{x.plate}</b></td><td>{x.chargeType}</td><td>{duration(x.minutes||0)}</td><td>{money(x.discount)}</td><td><b>{money(x.total)}</b></td><td>{x.payment}</td></tr>)}</tbody></table>{history.length===0&&<div className="empty-inline">As movimentações aparecerão após finalizar uma saída.</div>}</div></section>}
-
- {tab==='reports'&&<div className="report-page"><div className="report-print-heading"><h2>Estaciona Fácil</h2><p>{reportType==='pending'?'Relatório de pendências':reportType==='monthly'?'Relatório de mensalistas':'Relatório de arrecadação'} · Mês: {monthFilter}</p><p>Emitido em {new Date().toLocaleDateString('pt-BR')}</p></div><section className="panel full-panel"><div className="panel-heading"><div><h3>Relatórios</h3><p>Escolha o tipo de listagem e imprima ou salve em PDF.</p></div><div className="report-actions"><button className="secondary-btn" onClick={exportReportCsv}>Exportar CSV</button><button className="primary-btn" onClick={printReport}><span>Imprimir / Salvar PDF</span></button></div></div><div className="report-filters"><label>Tipo de relatório<select className="text-input" value={reportType} onChange={e=>setReportType(e.target.value)}><option value="pending">Pendências</option><option value="monthly">Mensalistas</option><option value="income">Arrecadação</option></select></label><label>Mês de referência<input type="month" className="text-input" value={monthFilter} onChange={e=>setMonthFilter(e.target.value)}/></label>{reportType==='monthly'&&<label>Situação<select className="text-input" value={monthlyStatusFilter} onChange={e=>setMonthlyStatusFilter(e.target.value)}><option>Todos</option><option>Pago</option><option>Pendente</option></select></label>}{reportType==='income'&&<label>Forma de pagamento<select className="text-input" value={paymentMethodFilter} onChange={e=>setPaymentMethodFilter(e.target.value)}><option>Todos</option><option>Pix</option><option>Dinheiro</option><option>Cartão</option></select></label>}</div>{reportType==='pending'&&<div className="report-section"><h3>Mensalidades pendentes · referência {monthFilter}</h3><div className="table-wrap"><table><thead><tr><th>PLACA</th><th>MENSALISTA</th><th>PLANO</th><th>REFERÊNCIA</th><th>VENCIMENTO</th><th>VALOR PENDENTE</th></tr></thead><tbody>{reportPendingBills.map(x=><tr key={x.id}><td><b className="plate-chip">{x.plate}</b></td><td>{x.customerName||'—'}</td><td>{x.plan==='garage'?'Garagem':'Horário comercial'}</td><td>{x.referenceMonth}</td><td>{x.dueDate?fmtDate(`${x.dueDate}T12:00:00`):'—'}</td><td><b>{money(x.amount)}</b></td></tr>)}</tbody></table>{reportPendingBills.length===0&&<div className="empty-inline">Não há mensalidades pendentes geradas para este mês.</div>}</div><p className="report-note">As mensalidades pendentes não são somadas à arrecadação.</p></div>}{reportType==='monthly'&&<div className="report-section"><h3>Mensalistas · referência {monthFilter} · {monthlyStatusFilter.toLowerCase()}</h3><div className="table-wrap"><table><thead><tr><th>PLACA</th><th>MENSALISTA</th><th>PLANO</th><th>REFERÊNCIA</th><th>VENCIMENTO</th><th>VALOR</th><th>SITUAÇÃO</th><th>DATA DO PAGAMENTO</th><th>FORMA</th></tr></thead><tbody>{reportMonthlyReferenceBills.map(x=><tr key={x.id}><td><b className="plate-chip">{x.plate}</b></td><td>{x.customerName||'—'}</td><td>{x.plan==='garage'?'Garagem':'Horário comercial'}</td><td>{x.referenceMonth}</td><td>{x.dueDate?fmtDate(`${x.dueDate}T12:00:00`):'—'}</td><td><b>{money(x.amount)}</b></td><td><span className={`status-chip ${x.status==='Pago'?'paid':'pending'}`}>{x.status}</span></td><td>{x.paidAt?fmtDate(x.paidAt):'—'}</td><td>{x.paymentMethod||'—'}</td></tr>)}</tbody></table>{reportMonthlyReferenceBills.length===0&&<div className="empty-inline">Nenhuma cobrança encontrada para este mês. Gere as mensalidades na aba Mensalistas.</div>}</div></div>}{reportType==='income'&&<><div className="report-section"><h3>Recebimentos de estacionamento</h3><div className="table-wrap"><table><thead><tr><th>DATA</th><th>PLACA</th><th>MODALIDADE</th><th>VALOR BRUTO</th><th>DESCONTO</th><th>TOTAL RECEBIDO</th><th>PAGAMENTO</th></tr></thead><tbody>{reportHistory.map(x=><tr key={x.id}><td>{fmtDate(x.exitAt)}</td><td><b className="plate-chip">{x.plate}</b></td><td>{x.chargeType}</td><td>{money(x.gross)}</td><td>{money(x.discount)}</td><td><b>{money(x.total)}</b></td><td>{x.payment}</td></tr>)}</tbody></table>{reportHistory.length===0&&<div className="empty-inline">Nenhum recebimento de estacionamento neste mês.</div>}</div><p className="report-note">Total recebido de estacionamento: <b>{money(reportParkingTotal)}</b></p></div><div className="report-section"><h3>Mensalidades recebidas por data de pagamento</h3><div className="table-wrap"><table><thead><tr><th>DATA DO PAGAMENTO</th><th>PLACA</th><th>MENSALISTA</th><th>REFERÊNCIA</th><th>VENCIMENTO</th><th>VALOR RECEBIDO</th><th>FORMA</th></tr></thead><tbody>{reportPaidBills.map(x=><tr key={x.id}><td>{x.paidAt?fmtDate(x.paidAt):'—'}</td><td><b className="plate-chip">{x.plate}</b></td><td>{x.customerName||'—'}</td><td>{x.referenceMonth}</td><td>{x.dueDate?fmtDate(`${x.dueDate}T12:00:00`):'—'}</td><td><b>{money(x.amount)}</b></td><td>{x.paymentMethod}</td></tr>)}</tbody></table>{reportPaidBills.length===0&&<div className="empty-inline">Nenhuma mensalidade recebida nesta data.</div>}</div><p className="report-note">Total recebido em mensalidades: <b>{money(reportMonthlyTotal)}</b> · Total geral recebido: <b>{money(reportTotal)}</b></p></div></>}</section></div>}
-
- {tab==='settings'&&<section className="panel full-panel settings-panel"><div className="panel-heading"><div><h3>Configurações do estacionamento</h3><p>Área restrita para alterar tarifas e regras operacionais.</p></div><LockKeyhole size={22} className="muted-icon"/></div>{!unlocked?<div className="unlock-box"><div className="unlock-icon"><LockKeyhole size={25}/></div><h3>Acesso protegido</h3><p>Digite a senha administrativa para editar as configurações.</p><form onSubmit={e=>{e.preventDefault();if(password===settings.adminPassword){setUnlocked(true);setPassword('');setNotice('Configurações desbloqueadas.')}else setNotice('Senha incorreta.')}}><input type="password" className="text-input" value={password} onChange={e=>setPassword(e.target.value)} placeholder="Senha de acesso"/><button className="primary-btn" type="submit">Desbloquear <span>→</span></button></form><small>Senha inicial de demonstração: 1234. Altere-a após configurar o sistema.</small></div>:<div className="settings-content"><div className="settings-section"><h4>Tarifas</h4><div className="settings-grid"><Setting label="Rotativo por hora (R$)" value={settings.hourly} onChange={v=>setSettings(s=>({...s,hourly:v}))}/><Setting label="Diária (R$)" value={settings.daily} onChange={v=>setSettings(s=>({...s,daily:v}))}/><Setting label="Mensalidade garagem (R$)" value={settings.garage} onChange={v=>setSettings(s=>({...s,garage:v}))}/><Setting label="Mensalidade comercial (R$)" value={settings.commercial} onChange={v=>setSettings(s=>({...s,commercial:v}))}/></div></div><div className="settings-section"><h4>Horário comercial</h4><div className="settings-grid"><Setting label="Abertura" type="time" value={settings.open} onChange={v=>setSettings(s=>({...s,open:v}))}/><Setting label="Fechamento" type="time" value={settings.close} onChange={v=>setSettings(s=>({...s,close:v}))}/></div></div><div className="settings-section"><h4>Segurança</h4><Setting label="Nova senha administrativa" type="password" value={settings.adminPassword} onChange={v=>setSettings(s=>({...s,adminPassword:v}))}/></div><div className="settings-actions"><button className="primary-btn" onClick={()=>{setUnlocked(false);setNotice('Configurações salvas.')}}>Salvar e bloquear configurações</button><button className="secondary-btn" onClick={()=>{if(confirm('Apagar todas as movimentações e veículos ativos deste navegador?')){setActive([]);setHistory([]);setNotice('Movimentações apagadas.')}}}>Limpar movimentações</button></div><p className="report-note">Versão inicial: as configurações ficam salvas neste navegador. Para uso real em vários dispositivos, será necessário conectar o sistema ao Google Sheets/Apps Script.</p></div>}</section>}
- <footer className="footer"><span>ESTACIONA FÁCIL <b>·</b> Controle simples, atendimento rápido.</span><span>Dados locais neste navegador · integração com planilha ainda pendente</span></footer></main>
+ {tab==='reports'&&<><div className="stats-grid report-stats"><Stat icon={CircleDollarSign} label="Faturamento total registrado" value={money(history.reduce((s,x)=>s+x.total,0))} tone="green"/><Stat icon={Clock3} label="Rotativo" value={money(totalsByType.hourly)} tone="blue"/><Stat icon={ParkingCircle} label="Diárias" value={money(totalsByType.daily)} tone="purple"/></div><section className="panel full-panel"><div className="panel-heading"><div><h3>Resumo das operações</h3><p>Valores baseados nas saídas registradas neste dispositivo.</p></div><button className="secondary-btn" onClick={()=>{const rows=[['Data','Placa','Modalidade','Minutos','Valor bruto','Desconto','Total','Pagamento'],...history.map(x=>[fmtDate(x.exitAt),x.plate,x.chargeType,x.minutes,x.gross,x.discount,x.total,x.payment])];const csv='\ufeff'+rows.map(r=>r.map(v=>'"'+String(v??'').replaceAll('"','""')+'"').join(';')).join('\n');const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8;'}));a.download='movimentacoes-estacionamento.csv';a.click();URL.revokeObjectURL(a.href)}}>Exportar CSV</button></div><p className="report-note">Os valores são calculados por modalidade; mensalidades cadastradas não são lançadas como recebimento automaticamente nesta versão inicial.</p></section></>}
+ {tab==='settings'&&<section className="panel full-panel settings-panel"><div className="panel-heading"><div><h3>Configurações do estacionamento</h3><p>Área restrita para alterar tarifas e regras operacionais.</p></div><LockKeyhole size={22} className="muted-icon"/></div>{!unlocked?<div className="unlock-box"><div className="unlock-icon"><LockKeyhole size={25}/></div><h3>Acesso protegido</h3><p>Digite a senha administrativa para editar as configurações.</p><form onSubmit={e=>{e.preventDefault();if(password===settings.adminPassword){setUnlocked(true);setPassword('');setNotice('Configurações desbloqueadas.')}else setNotice('Senha incorreta.')}}><input type="password" className="text-input" value={password} onChange={e=>setPassword(e.target.value)} placeholder="Senha de acesso"/><button className="primary-btn" type="submit">Desbloquear <span>→</span></button></form><small>Senha inicial de demonstração: 1234. Altere-a após configurar o sistema.</small></div>:<div className="settings-content"><div className="settings-section"><h4>Tarifas</h4><div className="settings-grid"><Setting label="Rotativo por hora (R$)" value={settings.hourly} onChange={v=>setSettings(s=>({...s,hourly:v}))}/><Setting label="Diária (R$)" value={settings.daily} onChange={v=>setSettings(s=>({...s,daily:v}))}/><Setting label="Mensalidade garagem (R$)" value={settings.garage} onChange={v=>setSettings(s=>({...s,garage:v}))}/><Setting label="Mensalidade comercial (R$)" value={settings.commercial} onChange={v=>setSettings(s=>({...s,commercial:v}))}/></div></div><div className="settings-section"><h4>Horário comercial</h4><div className="settings-grid"><Setting label="Abertura" type="time" value={settings.open} onChange={v=>setSettings(s=>({...s,open:v}))}/><Setting label="Fechamento" type="time" value={settings.close} onChange={v=>setSettings(s=>({...s,close:v}))}/></div></div><div className="settings-section"><h4>Segurança</h4><Setting label="Nova senha administrativa" type="password" value={settings.adminPassword} onChange={v=>setSettings(s=>({...s,adminPassword:v}))}/></div><div className="settings-section"><h4>Integração com Google Sheets</h4><div className="settings-grid"><Setting label="URL do Web App (Apps Script)" type="url" value={api.url} onChange={v=>setApi(a=>({...a,url:v}))}/><Setting label="Token de integração" type="password" value={api.token} onChange={v=>setApi(a=>({...a,token:v}))}/></div><div className="settings-actions" style={{marginTop:'12px'}}><button className="secondary-btn" onClick={loadNow} disabled={syncing}>Carregar da planilha</button><button className="primary-btn" onClick={syncNow} disabled={syncing}>Salvar na planilha</button></div><p className="report-note" style={{marginTop:'12px'}}>Status: {syncing?'sincronizando…':syncStatus==='online'?'conectado':syncStatus==='error'?'erro de conexão':'somente local'}{syncError&&<><br/>{syncError}</>}</p></div><div className="settings-actions"><button className="primary-btn"  onClick={()=>{setUnlocked(false);setNotice('Configurações salvas.')}}>Salvar e bloquear configurações</button><button className="secondary-btn" onClick={()=>{if(confirm('Apagar todas as movimentações e veículos ativos deste navegador?')){setActive([]);setHistory([]);setNotice('Movimentações apagadas.')}}}>Limpar movimentações</button></div><p className="report-note">Versão inicial: as configurações ficam salvas neste navegador. Para uso real em vários dispositivos, será necessário conectar o sistema ao Google Sheets/Apps Script.</p></div>}</section>}
+ <footer className="footer"><span>ESTACIONA FÁCIL <b>·</b> Controle simples, atendimento rápido.</span><span>Dados locais de demonstração</span></footer></main>
  {checkout&&<div className="overlay" onClick={()=>setCheckout(null)}><div className="checkout-modal" onClick={e=>e.stopPropagation()}><div className="modal-head"><div><span className="eyebrow">FINALIZAÇÃO</span><h2>Fechar estacionamento</h2></div><button className="icon-btn" onClick={()=>setCheckout(null)}><X size={20}/></button></div><div className="checkout-plate"><CarFront size={24}/><div><strong>{checkout.plate}</strong><span>{checkout.customerName||'Cliente avulso'}</span></div><span className="plan-chip">{checkout.kind==='monthly'?'Mensalista':checkout.kind==='daily'?'Diária':'Rotativo'}</span></div><div className="checkout-details"><div><span>Entrada</span><b>{fmtDate(checkout.entryAt)} · {fmtTime(checkout.entryAt)}</b></div><div><span>Tempo estacionado</span><b>{duration(calc(checkout).mins)}</b></div><div><span>Tarifa</span><b>{calc(checkout).label}</b></div><div><span>Valor original</span><b>{money(calc(checkout).gross)}</b></div></div><label className="field-label">DESCONTO EM REAIS (R$)</label><input className="text-input" value={discount} onChange={e=>setDiscount(e.target.value)} inputMode="decimal" placeholder="0,00"/><div className="total-line"><span>Total a cobrar</span><strong>{money(Math.max(0,calc(checkout).gross-Math.max(0,Math.min(calc(checkout).gross,Number(String(discount).replace(',','.'))||0))))}</strong></div><label className="field-label">FORMA DE PAGAMENTO</label><div className="payment-options">{[['Pix',Smartphone],['Dinheiro',Banknote],['Cartão',CreditCard]].map(([p,I])=><button key={p} className={payment===p?'selected':''} onClick={()=>setPayment(p)}><I size={17}/>{p}</button>)}</div><button className="primary-btn confirm-btn" onClick={finish}><CheckCircle2 size={18}/> Confirmar saída e pagamento</button><p className="helper center">O registro será salvo no histórico local deste navegador.</p></div></div>}
- {modal==='vehicle'&&<div className="overlay" onClick={()=>setModal('')}><div className="small-modal" onClick={e=>e.stopPropagation()}><div className="modal-head"><div><span className="eyebrow">CADASTRO</span><h2>Novo mensalista</h2></div><button className="icon-btn" onClick={()=>setModal('')}><X size={20}/></button></div><p className="modal-desc">A placa é o identificador principal. Nome e telefone são opcionais.</p><label className="field-label">PLACA</label><input id="cplate" className="text-input plate-text" placeholder="ABC1D23" maxLength={7} onChange={e=>e.target.value=plateFormat(e.target.value)}/><label className="field-label">NOME (OPCIONAL)</label><input id="cname" className="text-input" placeholder="Nome completo"/><label className="field-label">TELEFONE (OPCIONAL)</label><input id="cphone" className="text-input" placeholder="(00) 00000-0000"/><label className="field-label">PLANO MENSAL</label><select id="cplan" className="text-input"><option value="garage">Garagem — {money(settings.garage)}/mês</option><option value="commercial">Horário comercial ({settings.open}–{settings.close}) — {money(settings.commercial)}/mês</option></select><button className="primary-btn confirm-btn" onClick={addClient}>Salvar mensalista</button></div></div>}
+ {modal==='vehicle'&&<div className="overlay" onClick={()=>setModal('')}><div className="small-modal" onClick={e=>e.stopPropagation()}><div className="modal-head"><div><span className="eyebrow">CADASTRO</span><h2>Novo mensalista</h2></div><button className="icon-btn" onClick={()=>setModal('')}><X size={20}/></button></div><p className="modal-desc">A placa é o identificador principal. Nome é obrigatório para diferenciar o cliente; telefone é opcional.</p><label className="field-label">PLACA</label><input id="cplate" className="text-input plate-text" placeholder="ABC1D23" maxLength={7} onChange={e=>e.target.value=plateFormat(e.target.value)}/><label className="field-label">NOME</label><input id="cname" className="text-input" placeholder="Nome completo"/><label className="field-label">TELEFONE (OPCIONAL)</label><input id="cphone" className="text-input" placeholder="(00) 00000-0000"/><label className="field-label">PLANO MENSAL</label><select id="cplan" className="text-input"><option value="garage">Garagem — {money(settings.garage)}/mês</option><option value="commercial">Horário comercial ({settings.open}–{settings.close}) — {money(settings.commercial)}/mês</option></select><button className="primary-btn confirm-btn" onClick={addClient}>Salvar mensalista</button></div></div>}
+ {cameraOpen&&<div className="camera-overlay"><div className="camera-card"><div className="camera-head"><div><strong>Enquadre a placa</strong><span>Deixe a placa inteira dentro do quadro, de frente e bem iluminada.</span></div><button className="icon-btn" onClick={closeCamera}><X size={20}/></button></div><div className="camera-view"><video ref={cameraVideoRef} playsInline muted/><div className="plate-frame"><span/><span/><span/><span/></div><div className="camera-tip">Aproxime até a placa ocupar quase todo o quadro</div></div><div className="camera-actions"><button className="secondary-btn" onClick={closeCamera}>Cancelar</button><button className="primary-btn" onClick={captureCamera}><Camera size={18}/> Capturar placa</button></div></div></div>} {ocrBusy&&<div className="ocr-overlay"><div className="ocr-card">{ocrPreview&&<img src={ocrPreview} alt="Foto da placa"/>}<LoaderCircle className="spin" size={30}/><strong>Lendo a placa…</strong><span>O reconhecimento pode levar alguns segundos.</span></div></div>}
  {notice&&<div className="toast"><CheckCircle2 size={17}/>{notice}<button onClick={()=>setNotice('')}><X size={15}/></button></div>}
  </div>
 }
 function Stat({icon:Icon,label,value,tone}){return <div className="stat-card"><div className={`stat-icon ${tone}`}><Icon size={20}/></div><div><span>{label}</span><strong>{value}</strong></div></div>}
-function Setting({label,value,onChange,type='number'}){return <label className="setting-field"><span>{label}</span><input type={type} value={value} step={type==='number'?'0.01':undefined} onChange={e=>onChange(type==='number'?(e.target.value===''?'':Number(e.target.value)):e.target.value)}/></label>}
+function Setting({label,value,onChange,type='number'}){
+ const numeric=type==='number';
+ return <label className="setting-field"><span>{label}</span><input type={type} value={value ?? ''} step={numeric?'0.01':undefined} onChange={e=>onChange(numeric?(e.target.value===''?'':Number(e.target.value)):e.target.value)}/></label>
+}

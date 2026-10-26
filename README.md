@@ -1,33 +1,62 @@
-# Estaciona Fácil — versão com controle de mensalidades
+# Estaciona Fácil — protótipo inicial
 
-## O que mudou
-- Removida a aba separada **Veículos**. O cadastro permanente agora fica em **Mensalistas**; veículos rotativos são registrados pela placa no PDV.
-- Em **Mensalistas**, é possível gerar cobranças por mês de referência para os mensalistas cadastrados, definir vencimento e impedir duplicidade para a mesma placa/cliente e mês.
-- Cada cobrança fica **Pendente** até o operador registrar o recebimento. O registro inclui data e forma de pagamento (Pix, Dinheiro ou Cartão).
-- **Relatórios** mostram separadamente arrecadação de rotativos/diárias, mensalidades recebidas e mensalidades pendentes. Os valores pendentes não entram no total recebido.
-- Relatório filtrável por mês e forma de pagamento, com exportação CSV e impressão do navegador (escolha “Salvar como PDF”).
-- Nome e telefone do mensalista passaram a ser opcionais; a placa continua obrigatória.
+## Como abrir no Windows
+1. Extraia **todo** o arquivo ZIP para uma pasta do computador.
+2. Instale o Node.js LTS se ainda não estiver instalado: https://nodejs.org/
+3. Dentro da pasta extraída, dê dois cliques em `iniciar-estaciona-facil.bat`.
+4. Na primeira execução, o inicializador instala as dependências (é necessário ter internet).
+5. Quando aparecer um endereço como `http://localhost:5173/`, abra esse endereço no navegador.
+6. Mantenha a janela preta aberta enquanto usar o sistema. Para encerrar, pressione `Ctrl+C` nela.
 
-## Executar localmente
-1. Instale Node.js LTS.
-2. Execute `npm install` na pasta do projeto.
-3. Execute `npm run dev` e abra o endereço informado pelo Vite.
+**Importante:** não abra `index.html` com dois cliques. O projeto usa React + Vite e precisa ser iniciado pelo arquivo `.bat` ou pelos comandos abaixo.
 
-No Windows, o arquivo `iniciar-estaciona-facil.bat` também pode iniciar o ambiente após a instalação das dependências.
+## Iniciar manualmente
+Abra um terminal nesta pasta e execute:
+```bash
+npm install
+npm run dev
+```
 
-## Importante sobre armazenamento
-Esta versão de interface ainda usa `localStorage` neste navegador. Os novos registros de mensalidades **não são sincronizados automaticamente com o Google Sheets** ainda. O arquivo `backend/Code.gs` foi atualizado para criar a aba `Mensalidades` e incluir esses registros no formato de estado da API, como preparação para a próxima etapa de integração. Não use o armazenamento local como única cópia dos dados reais.
+## O que está prototipado
+- PDV com entrada por placa e lista de veículos no pátio.
+- Rotativo a R$ 6,00/hora, proporcional por minuto.
+- Diária de R$ 40,00 no período das 08h às 18h.
+- Mensalista garagem: R$ 400,00/mês.
+- Mensalista horário comercial: R$ 200,00/mês, com janela de 08h às 18h.
+- Desconto, formas de pagamento, histórico e relatório básico com exportação CSV.
+- Configurações com senha demonstrativa inicial `1234`.
 
-## Atualizar o Apps Script
-1. Faça uma cópia de segurança da planilha.
-2. No editor do Apps Script vinculado à planilha, atualize o código usando `backend/Code.gs`, preservando a sua chave `APP_TOKEN` atual (não a compartilhe).
-3. Execute `setupEstacionaFacil()` para criar a nova aba `Mensalidades` sem apagar as abas existentes.
-4. Atualize a implantação do Web App para uma nova versão.
+## Limitações importantes
+Esta é uma versão de protótipo que salva dados no `localStorage` do navegador. Os dados não são compartilhados entre computadores e podem ser perdidos se os dados do navegador forem apagados. A senha também é apenas demonstrativa, não é proteção adequada para produção. Antes do uso real, conectar ao Google Apps Script + Google Sheets, proteger as configurações no servidor, implementar controle de caixa e validar todas as regras operacionais.
 
-**Segurança:** antes de usar dados pessoais reais, proteja a leitura da API. Uma chave incluída no JavaScript do navegador não é segredo e não deve ser considerada autenticação forte.
+## Regras iniciais
+- Rotativo: R$ 6,00/hora, proporcional por minuto.
+- Diária: R$ 40,00, período de operação das 08h às 18h.
+- Mensalista garagem: R$ 400,00/mês; o protótipo considera acesso integral.
+- Mensalista comercial: R$ 200,00/mês; o protótipo considera acesso das 08h às 18h.
 
-## Revisão de interface (25/10/2026)
-- A tela **PDV / Operação** e a tela **Movimentações** foram preservadas sem alterações visuais.
-- **Mensalistas** agora é uma única listagem compacta: placa, nome, plano, valor, situação da referência escolhida e ação de pagamento. O cadastro fica acessível pelo botão “Novo mensalista”, sem adicionar controles à tela do PDV.
-- **Relatórios** não usam cards de dashboard. Há três listagens selecionáveis: **Pendências**, **Mensalistas** (Todos/Pago/Pendente) e **Arrecadação**. A impressão/PDF e o CSV correspondem ao relatório selecionado.
-- O status pago/pendente é filtrado pelo mês de referência; o relatório de arrecadação mensal considera a data real em que o recebimento foi registrado.
+
+## Integração Google Sheets — versão evoluída
+
+O app agora pode ler e gravar automaticamente o estado na planilha via Google Apps Script, sem alterar o layout visual do aplicativo.
+
+1. Abra a planilha que será usada pelo sistema.
+2. Em **Extensões → Apps Script**, cole o conteúdo de `Code.gs`.
+3. Execute `setupEstacionaFacil()` uma vez.
+4. Defina `APP_TOKEN` no `Code.gs` com uma chave exclusiva.
+5. Publique como **Web app**, permitindo acesso conforme a política da sua conta.
+6. Abra o app e entre em **Configurações → Integração com Google Sheets**.
+7. Informe a URL do Web App e o mesmo token.
+8. Use **Carregar da planilha** para testar a leitura e **Salvar na planilha** para testar a gravação.
+
+### O que foi testado nesta versão
+
+- Build do React/Vite.
+- Persistência local continua funcionando.
+- Leitura inicial da planilha quando a integração está configurada.
+- Gravação automática após alterações, com debounce.
+- Botões manuais de carregar/salvar.
+- Falha de conexão não bloqueia a operação local.
+- `Code.gs` mantém as abas e cabeçalhos existentes e usa `clearContents()`, preservando a formatação da planilha.
+
+> Observação: a gravação real em uma planilha Google exige publicar o `Code.gs` no Google Apps Script. O ambiente deste pacote não consegue autenticar nem executar a sua planilha Google diretamente.

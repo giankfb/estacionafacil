@@ -8,8 +8,7 @@ const SHEETS = {
   settings: { name: 'Configuracoes', headers: ['chave', 'valor'] },
   clients: { name: 'Mensalistas', headers: ['id', 'placa', 'nome', 'telefone', 'plano', 'criadoEm'] },
   active: { name: 'EmAndamento', headers: ['id', 'placa', 'nomeCliente', 'telefone', 'modalidade', 'plano', 'entradaEm'] },
-  history: { name: 'Movimentacoes', headers: ['id', 'placa', 'nomeCliente', 'telefone', 'modalidade', 'plano', 'entradaEm', 'saidaEm', 'minutos', 'valorBruto', 'desconto', 'total', 'pagamento', 'tipoCobranca'] },
-  monthlyPayments: { name: 'Mensalidades', headers: ['id', 'clienteId', 'placa', 'nomeCliente', 'plano', 'mesReferencia', 'vencimento', 'valor', 'situacao', 'dataPagamento', 'formaPagamento'] }
+  history: { name: 'Movimentacoes', headers: ['id', 'placa', 'nomeCliente', 'telefone', 'modalidade', 'plano', 'entradaEm', 'saidaEm', 'minutos', 'valorBruto', 'desconto', 'total', 'pagamento', 'tipoCobranca'] }
 };
 const DEFAULT_SETTINGS = { hourly: 6, daily: 40, garage: 400, commercial: 200, open: '08:00', close: '18:00', adminPassword: '1234' };
 
@@ -24,7 +23,7 @@ function doGet(e) {
 function doPost(e) {
   try {
     const body = JSON.parse((e && e.postData && e.postData.contents) || '{}');
-    if (body.token !== APP_TOKEN || APP_TOKEN === 'TROQUE_POR_UMA_CHAVE_LONGA_E_EXCLUSIVA') {
+    if (!APP_TOKEN || APP_TOKEN === 'TROQUE_POR_UMA_CHAVE_LONGA_E_EXCLUSIVA' || body.token !== APP_TOKEN) {
       return json_({ ok: false, error: 'Token inválido. Configure APP_TOKEN no Apps Script e envie o mesmo token pelo aplicativo.' });
     }
     if (body.action !== 'save') return json_({ ok: false, error: 'Ação inválida.' });
@@ -51,7 +50,7 @@ function setupEstacionaFacil() {
     settingsSheet.getRange(2, 1, Object.keys(DEFAULT_SETTINGS).length, 2)
       .setValues(Object.entries(DEFAULT_SETTINGS).map(([k,v]) => [k, String(v)]));
   }
-  SpreadsheetApp.getUi().alert('Estrutura criada/atualizada. Abas: Configuracoes, Mensalistas, EmAndamento, Movimentacoes e Mensalidades.');
+  SpreadsheetApp.getUi().alert('Estrutura criada. Abas: Configuracoes, Mensalistas, EmAndamento e Movimentacoes.');
 }
 
 function readState_() {
@@ -67,8 +66,7 @@ function readState_() {
     settings,
     clients: readRows_(ss, 'clients').map(r => ({ id:r[0], plate:r[1], name:r[2], phone:r[3], plan:r[4], createdAt:r[5] })),
     active: readRows_(ss, 'active').map(r => ({ id:r[0], plate:r[1], customerName:r[2], customerPhone:r[3], kind:r[4], plan:r[5] || null, entryAt:r[6] })),
-    history: readRows_(ss, 'history').map(r => ({ id:r[0], plate:r[1], customerName:r[2], customerPhone:r[3], kind:r[4], plan:r[5] || null, entryAt:r[6], exitAt:r[7], minutes:Number(r[8])||0, gross:Number(r[9])||0, discount:Number(r[10])||0, total:Number(r[11])||0, payment:r[12], chargeType:r[13] })),
-    monthlyPayments: readRows_(ss, 'monthlyPayments').map(r => ({ id:r[0], clientId:r[1], plate:r[2], customerName:r[3], plan:r[4], referenceMonth:r[5], dueDate:r[6], amount:Number(r[7])||0, status:r[8] || 'Pendente', paidAt:r[9], paymentMethod:r[10] }))
+    history: readRows_(ss, 'history').map(r => ({ id:r[0], plate:r[1], customerName:r[2], customerPhone:r[3], kind:r[4], plan:r[5] || null, entryAt:r[6], exitAt:r[7], minutes:Number(r[8])||0, gross:Number(r[9])||0, discount:Number(r[10])||0, total:Number(r[11])||0, payment:r[12], chargeType:r[13] }))
   };
 }
 
@@ -79,13 +77,17 @@ function saveState_(state) {
     if (state.settings && typeof state.settings === 'object') {
       const sh = ss.getSheetByName(SHEETS.settings.name);
       const rows = Object.entries(state.settings).map(([k,v]) => [k, String(v)]);
-      sh.clearContents(); sh.getRange(1,1,1,2).setValues([SHEETS.settings.headers]);
+      sh.clearContents();
+      sh.getRange(1,1,1,2).setValues([SHEETS.settings.headers]);
+      // Horários devem ser armazenados como TEXTO. Caso a célula esteja
+      // formatada como hora, o Google Sheets devolve um objeto Date (1899),
+      // e o aplicativo acaba exibindo "Sat Dec 30 1899...".
+      sh.getRange(1,1,Math.max(2, rows.length + 1),2).setNumberFormat('@');
       if (rows.length) sh.getRange(2,1,rows.length,2).setValues(rows);
     }
     writeRows_(ss, 'clients', (state.clients||[]).map(c => [c.id,c.plate,c.name,c.phone,c.plan,c.createdAt]));
     writeRows_(ss, 'active', (state.active||[]).map(v => [v.id,v.plate,v.customerName,v.customerPhone,v.kind,v.plan||'',v.entryAt]));
     writeRows_(ss, 'history', (state.history||[]).map(x => [x.id,x.plate,x.customerName,x.customerPhone,x.kind,x.plan||'',x.entryAt,x.exitAt,x.minutes,x.gross,x.discount,x.total,x.payment,x.chargeType]));
-    writeRows_(ss, 'monthlyPayments', (state.monthlyPayments||[]).map(x => [x.id,x.clientId,x.plate,x.customerName,x.plan,x.referenceMonth,x.dueDate,x.amount,x.status,x.paidAt,x.paymentMethod]));
   } finally { lock.releaseLock(); }
 }
 
@@ -104,12 +106,18 @@ function readRows_(ss, key) {
 function writeRows_(ss, key, rows) {
   const def = SHEETS[key]; let sh = ss.getSheetByName(def.name);
   if (!sh) sh = ss.insertSheet(def.name);
+  // Limpa somente o conteúdo; formatação/layout da planilha é preservado.
   sh.clearContents(); sh.getRange(1,1,1,def.headers.length).setValues([def.headers]);
+
   if (rows.length) sh.getRange(2,1,rows.length,def.headers.length).setValues(rows.map(r => r.map(v => v == null ? '' : v)));
   sh.setFrozenRows(1);
 }
 function parseSetting_(key, value) {
   if (['hourly','daily','garage','commercial'].includes(key)) return Number(value) || 0;
+  // O Sheets pode devolver uma célula de horário como Date (data base 1899).
+  if (['open','close'].includes(key) && Object.prototype.toString.call(value) === '[object Date]' && !isNaN(value.getTime())) {
+    return Utilities.formatDate(value, Session.getScriptTimeZone(), 'HH:mm');
+  }
   return String(value == null ? '' : value);
 }
 function json_(obj) {
