@@ -25,3 +25,9 @@ Esta versão de interface ainda usa `localStorage` neste navegador. Os novos reg
 4. Atualize a implantação do Web App para uma nova versão.
 
 **Segurança:** antes de usar dados pessoais reais, proteja a leitura da API. Uma chave incluída no JavaScript do navegador não é segredo e não deve ser considerada autenticação forte.
+
+## Revisão de interface (25/10/2026)
+- A tela **PDV / Operação** e a tela **Movimentações** foram preservadas sem alterações visuais.
+- **Mensalistas** agora é uma única listagem compacta: placa, nome, plano, valor, situação da referência escolhida e ação de pagamento. O cadastro fica acessível pelo botão “Novo mensalista”, sem adicionar controles à tela do PDV.
+- **Relatórios** não usam cards de dashboard. Há três listagens selecionáveis: **Pendências**, **Mensalistas** (Todos/Pago/Pendente) e **Arrecadação**. A impressão/PDF e o CSV correspondem ao relatório selecionado.
+- O status pago/pendente é filtrado pelo mês de referência; o relatório de arrecadação mensal considera a data real em que o recebimento foi registrado.

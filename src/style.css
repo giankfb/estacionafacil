@@ -49,3 +49,10 @@
  .report-note{font-size:8px!important;background:#fff!important;border:1px solid #ccc!important;color:#222!important}
  .empty-inline{padding:8px!important;font-size:9px!important}
 }
+
+/* Ajustes da listagem simplificada de mensalistas e relatórios por tipo */
+.monthly-toolbar{display:flex;align-items:flex-end;gap:12px;flex-wrap:wrap;padding:14px;background:#f8fafc;border:1px solid #edf1f5;border-radius:10px;margin:0 0 10px}
+.monthly-toolbar label{display:grid;gap:7px;min-width:185px;color:#6d7b90;font-size:11px;font-weight:700}
+.monthly-hint{font-size:11px;line-height:1.6;color:#8794a7;margin:0 0 16px}
+.monthly-list-panel .table-wrap{margin-top:3px}
+@media(max-width:600px){.monthly-toolbar{align-items:stretch}.monthly-toolbar label{min-width:100%;width:100%}.monthly-toolbar>.primary-btn{width:100%}}
