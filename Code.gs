@@ -8,7 +8,8 @@ const SHEETS = {
   settings: { name: 'Configuracoes', headers: ['chave', 'valor'] },
   clients: { name: 'Mensalistas', headers: ['id', 'placa', 'nome', 'telefone', 'plano', 'criadoEm'] },
   active: { name: 'EmAndamento', headers: ['id', 'placa', 'nomeCliente', 'telefone', 'modalidade', 'plano', 'entradaEm'] },
-  history: { name: 'Movimentacoes', headers: ['id', 'placa', 'nomeCliente', 'telefone', 'modalidade', 'plano', 'entradaEm', 'saidaEm', 'minutos', 'valorBruto', 'desconto', 'total', 'pagamento', 'tipoCobranca'] }
+  history: { name: 'Movimentacoes', headers: ['id', 'placa', 'nomeCliente', 'telefone', 'modalidade', 'plano', 'entradaEm', 'saidaEm', 'minutos', 'valorBruto', 'desconto', 'total', 'pagamento', 'tipoCobranca'] },
+  monthlyBills: { name: 'ContasMensalistas', headers: ['id','clienteId','placa','nome','telefone','plano','referencia','vencimento','valor','pagamentosJson','criadoEm'] }
 };
 const DEFAULT_SETTINGS = { hourly: 6, daily: 40, garage: 400, commercial: 200, open: '08:00', close: '18:00', adminPassword: '1234' };
 
@@ -50,7 +51,7 @@ function setupEstacionaFacil() {
     settingsSheet.getRange(2, 1, Object.keys(DEFAULT_SETTINGS).length, 2)
       .setValues(Object.entries(DEFAULT_SETTINGS).map(([k,v]) => [k, String(v)]));
   }
-  SpreadsheetApp.getUi().alert('Estrutura criada. Abas: Configuracoes, Mensalistas, EmAndamento e Movimentacoes.');
+  SpreadsheetApp.getUi().alert('Estrutura criada. Abas: Configuracoes, Mensalistas, EmAndamento, Movimentacoes e ContasMensalistas.');
 }
 
 function readState_() {
@@ -66,7 +67,8 @@ function readState_() {
     settings,
     clients: readRows_(ss, 'clients').map(r => ({ id:r[0], plate:r[1], name:r[2], phone:r[3], plan:r[4], createdAt:r[5] })),
     active: readRows_(ss, 'active').map(r => ({ id:r[0], plate:r[1], customerName:r[2], customerPhone:r[3], kind:r[4], plan:r[5] || null, entryAt:r[6] })),
-    history: readRows_(ss, 'history').map(r => ({ id:r[0], plate:r[1], customerName:r[2], customerPhone:r[3], kind:r[4], plan:r[5] || null, entryAt:r[6], exitAt:r[7], minutes:Number(r[8])||0, gross:Number(r[9])||0, discount:Number(r[10])||0, total:Number(r[11])||0, payment:r[12], chargeType:r[13] }))
+    history: readRows_(ss, 'history').map(r => ({ id:r[0], plate:r[1], customerName:r[2], customerPhone:r[3], kind:r[4], plan:r[5] || null, entryAt:r[6], exitAt:r[7], minutes:Number(r[8])||0, gross:Number(r[9])||0, discount:Number(r[10])||0, total:Number(r[11])||0, payment:r[12], chargeType:r[13] })),
+    monthlyBills: readRows_(ss, 'monthlyBills').map(r => ({ id:r[0], clientId:r[1], plate:r[2], name:r[3], phone:r[4], plan:r[5], reference:r[6], dueDate:r[7], amount:Number(r[8])||0, payments:parseJson_(r[9], []), createdAt:r[10] }))
   };
 }
 
@@ -88,8 +90,11 @@ function saveState_(state) {
     writeRows_(ss, 'clients', (state.clients||[]).map(c => [c.id,c.plate,c.name,c.phone,c.plan,c.createdAt]));
     writeRows_(ss, 'active', (state.active||[]).map(v => [v.id,v.plate,v.customerName,v.customerPhone,v.kind,v.plan||'',v.entryAt]));
     writeRows_(ss, 'history', (state.history||[]).map(x => [x.id,x.plate,x.customerName,x.customerPhone,x.kind,x.plan||'',x.entryAt,x.exitAt,x.minutes,x.gross,x.discount,x.total,x.payment,x.chargeType]));
+    writeRows_(ss, 'monthlyBills', (state.monthlyBills||[]).map(b => [b.id,b.clientId,b.plate,b.name,b.phone,b.plan,b.reference,b.dueDate,b.amount,JSON.stringify(b.payments||[]),b.createdAt]));
   } finally { lock.releaseLock(); }
 }
+
+function parseJson_(value, fallback) { try { return value ? JSON.parse(String(value)) : fallback; } catch (e) { return fallback; } }
 
 function getSpreadsheet_() {
   const id = PropertiesService.getScriptProperties().getProperty('SPREADSHEET_ID');

@@ -23,7 +23,11 @@ npm run dev
 - Diária de R$ 40,00 no período das 08h às 18h.
 - Mensalista garagem: R$ 400,00/mês.
 - Mensalista horário comercial: R$ 200,00/mês, com janela de 08h às 18h.
-- Desconto, formas de pagamento, histórico e relatório básico com exportação CSV.
+- Cadastro de mensalistas com cobranças por mês de referência.
+- Registro de pagamentos totais ou parciais (parcelamento por vários lançamentos), com data e forma de pagamento.
+- Relatórios independentes de mensalistas, contas a receber e saldo mensal, com impressão/PDF e exportação CSV.
+- A aba Veículos foi removida; o cadastro de mensalistas está na própria aba Mensalistas.
+- Desconto e formas de pagamento para rotativos/diárias, histórico do dia, cobrança de mensalidades e relatórios por mês.
 - Configurações com senha demonstrativa inicial `1234`.
 
 ## Limitações importantes
@@ -49,14 +53,12 @@ O app agora pode ler e gravar automaticamente o estado na planilha via Google Ap
 7. Informe a URL do Web App e o mesmo token.
 8. Use **Carregar da planilha** para testar a leitura e **Salvar na planilha** para testar a gravação.
 
-### O que foi testado nesta versão
+### Integração de mensalidades
 
-- Build do React/Vite.
-- Persistência local continua funcionando.
-- Leitura inicial da planilha quando a integração está configurada.
-- Gravação automática após alterações, com debounce.
-- Botões manuais de carregar/salvar.
-- Falha de conexão não bloqueia a operação local.
-- `Code.gs` mantém as abas e cabeçalhos existentes e usa `clearContents()`, preservando a formatação da planilha.
+- As cobranças são geradas manualmente por mês na aba Mensalistas (botão “Gerar cobranças do mês”). O vencimento padrão é dia 10.
+- Para parcelar uma conta, registre cada parcela como pagamento separado; o saldo pendente é atualizado automaticamente.
+- Relatórios: Mensalistas, Contas a receber e Saldo do mês. O PDF é gerado pela opção Imprimir/Salvar PDF do navegador; CSV também está disponível.
+- O Apps Script inclui a aba `ContasMensalistas`, que armazena cobranças e pagamentos. Execute `setupEstacionaFacil()` para criar a nova aba e publique uma nova versão do Web App.
+- A compilação completa não foi confirmada neste ambiente porque a instalação de dependências excedeu o tempo disponível. Teste localmente com `npm install` e `npm run build` antes de publicar.
 
 > Observação: a gravação real em uma planilha Google exige publicar o `Code.gs` no Google Apps Script. O ambiente deste pacote não consegue autenticar nem executar a sua planilha Google diretamente.

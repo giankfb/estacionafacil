@@ -7,7 +7,7 @@ ESTACIONA FÁCIL — CONFIGURAÇÃO INICIAL DO GOOGLE SHEETS
 5. Clique em Salvar.
 6. No seletor de funções, escolha setupEstacionaFacil e clique em Executar.
 7. Autorize as permissões solicitadas pelo Google.
-8. Volte à planilha. Devem existir as abas Configuracoes, Mensalistas, EmAndamento e Movimentacoes.
+8. Volte à planilha. Devem existir as abas Configuracoes, Mensalistas, EmAndamento, Movimentacoes e ContasMensalistas.
 9. Para publicar: Implantar > Nova implantação > selecione Aplicativo da Web.
    - Executar como: Eu
    - Quem pode acessar: Qualquer pessoa (necessário para a chamada do app; a gravação é validada por token)
