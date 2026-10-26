@@ -68,7 +68,7 @@ function readState_() {
     clients: readRows_(ss, 'clients').map(r => ({ id:r[0], plate:r[1], name:r[2], phone:r[3], plan:r[4], createdAt:r[5] })),
     active: readRows_(ss, 'active').map(r => ({ id:r[0], plate:r[1], customerName:r[2], customerPhone:r[3], kind:r[4], plan:r[5] || null, entryAt:r[6] })),
     history: readRows_(ss, 'history').map(r => ({ id:r[0], plate:r[1], customerName:r[2], customerPhone:r[3], kind:r[4], plan:r[5] || null, entryAt:r[6], exitAt:r[7], minutes:Number(r[8])||0, gross:Number(r[9])||0, discount:Number(r[10])||0, total:Number(r[11])||0, payment:r[12], chargeType:r[13] })),
-    monthlyBills: readRows_(ss, 'monthlyBills').map(r => ({ id:r[0], clientId:r[1], plate:r[2], name:r[3], phone:r[4], plan:r[5], reference:r[6], dueDate:r[7], amount:Number(r[8])||0, payments:parseJson_(r[9], []), createdAt:r[10] }))
+    monthlyBills: readRows_(ss, 'monthlyBills').map(r => ({ id:String(r[0]), clientId:String(r[1]), plate:String(r[2] || ''), name:String(r[3] || ''), phone:String(r[4] || ''), plan:String(r[5] || ''), reference:normalizeMonth_(r[6]), dueDate:normalizeDate_(r[7]), amount:Number(r[8])||0, payments:parseJson_(r[9], []), createdAt:normalizeDateTime_(r[10]) }))
   };
 }
 
@@ -96,6 +96,32 @@ function saveState_(state) {
 
 function parseJson_(value, fallback) { try { return value ? JSON.parse(String(value)) : fallback; } catch (e) { return fallback; } }
 
+// Normaliza valores antigos que o Google Sheets possa ter convertido em datas.
+function normalizeMonth_(value) {
+  if (Object.prototype.toString.call(value) === '[object Date]' && !isNaN(value.getTime())) {
+    return Utilities.formatDate(value, Session.getScriptTimeZone(), 'yyyy-MM');
+  }
+  const s = String(value == null ? '' : value).trim();
+  const m = s.match(/^(\d{4})[-/](\d{1,2})/);
+  if (m) return `${m[1]}-${String(m[2]).padStart(2, '0')}`;
+  const d = new Date(s);
+  if (!isNaN(d.getTime()) && s) return Utilities.formatDate(d, Session.getScriptTimeZone(), 'yyyy-MM');
+  return s;
+}
+function normalizeDate_(value) {
+  if (Object.prototype.toString.call(value) === '[object Date]' && !isNaN(value.getTime())) {
+    return Utilities.formatDate(value, Session.getScriptTimeZone(), 'yyyy-MM-dd');
+  }
+  const s = String(value == null ? '' : value).trim();
+  const m = s.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})/);
+  if (m) return `${m[1]}-${String(m[2]).padStart(2, '0')}-${String(m[3]).padStart(2, '0')}`;
+  return s;
+}
+function normalizeDateTime_(value) {
+  if (Object.prototype.toString.call(value) === '[object Date]' && !isNaN(value.getTime())) return value.toISOString();
+  return String(value == null ? '' : value);
+}
+
 function getSpreadsheet_() {
   const id = PropertiesService.getScriptProperties().getProperty('SPREADSHEET_ID');
   if (id) return SpreadsheetApp.openById(id);
@@ -114,6 +140,11 @@ function writeRows_(ss, key, rows) {
   // Limpa somente o conteúdo; formatação/layout da planilha é preservado.
   sh.clearContents(); sh.getRange(1,1,1,def.headers.length).setValues([def.headers]);
 
+  if (key === 'monthlyBills') {
+    // Evita que o Sheets converta referências como 2026-10 em datas.
+    sh.getRange(1, 7, Math.max(2, rows.length + 1), 2).setNumberFormat('@');
+    sh.getRange(1, 10, Math.max(2, rows.length + 1), 1).setNumberFormat('@');
+  }
   if (rows.length) sh.getRange(2,1,rows.length,def.headers.length).setValues(rows.map(r => r.map(v => v == null ? '' : v)));
   sh.setFrozenRows(1);
 }

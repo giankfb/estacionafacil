@@ -83,9 +83,12 @@ export default function App(){
     if(Array.isArray(s.history))setHistory(s.history);
    if(Array.isArray(s.monthlyBills))setMonthlyBills(s.monthlyBills);
     setSyncStatus('online'); setNotice('Dados carregados da planilha.');
+    setRemoteLoaded(true);
    }catch(err){
+    // Não habilita o salvamento automático se a leitura inicial falhar;
+    // isso evita sobrescrever a planilha com dados locais antigos/vazios.
     if(!cancelled){setSyncStatus('error');setSyncError(err.message||'Falha ao carregar a planilha.');}
-   }finally{if(!cancelled){setSyncing(false);setRemoteLoaded(true);}}
+   }finally{if(!cancelled){setSyncing(false);}}
   };
   loadRemote();
   return()=>{cancelled=true};
@@ -137,15 +140,28 @@ export default function App(){
  };
  const billPaid=b=>Math.min(Number(b.amount)||0,(b.payments||[]).reduce((sum,p)=>sum+(Number(p.amount)||0),0));
  const billBalance=b=>Math.max(0,(Number(b.amount)||0)-billPaid(b));
- const payBill=()=>{
+ const payBill=async()=>{
   if(!paymentBill)return;
   const amount=Number(String(billPayAmount).replace(',','.'));
   if(!Number.isFinite(amount)||amount<=0){setNotice('Informe um valor de pagamento válido.');return;}
-  const balance=billBalance(paymentBill);
+  const currentBill=monthlyBills.find(b=>b.id===paymentBill.id)||paymentBill;
+  const balance=billBalance(currentBill);
   if(amount>balance+0.001){setNotice('O pagamento não pode ser maior que o saldo pendente.');return;}
   const paymentRecord={id:crypto.randomUUID(),date:billPayDate||new Date().toISOString().slice(0,10),amount,method:billPayMethod,createdAt:new Date().toISOString()};
-  setMonthlyBills(bs=>bs.map(b=>b.id===paymentBill.id?{...b,payments:[...(b.payments||[]),paymentRecord]}:b));
-  setPaymentBill(null);setNotice(amount<balance?'Pagamento parcial registrado. O saldo continua pendente.':'Mensalidade quitada.');
+  const nextBills=monthlyBills.map(b=>b.id===currentBill.id?{...b,payments:[...(b.payments||[]),paymentRecord]}:b);
+  // Persiste a cobrança atualizada antes de confirmar o pagamento na interface.
+  if(api.url && api.token){
+   setSyncing(true);setSyncError('');
+   try{
+    await apiRequest(api.url,{method:'POST',body:JSON.stringify({token:api.token,action:'save',state:{settings,clients,active,history,monthlyBills:nextBills}})});
+    setSyncStatus('online');
+   }catch(err){
+    setSyncStatus('error');setSyncError(err.message||'Falha ao salvar pagamento.');
+    setSyncing(false);setNotice('Pagamento não confirmado na planilha. Verifique a conexão e tente novamente.');return;
+   }finally{setSyncing(false);}
+  }
+  setMonthlyBills(nextBills);setPaymentBill(null);
+  setNotice(api.url&&api.token?(amount<balance?'Pagamento parcial salvo na planilha. O saldo continua pendente.':'Mensalidade quitada e salva na planilha.'):(amount<balance?'Pagamento parcial salvo apenas neste navegador. Configure a planilha para sincronizar.':'Mensalidade quitada neste navegador. Configure a planilha para sincronizar.'));
  };
  const ensureMonthlyBills=()=>generateBills();
  const printReport=()=>window.print();
@@ -169,6 +185,7 @@ export default function App(){
    if(Array.isArray(s.active))setActive(s.active);
    if(Array.isArray(s.history))setHistory(s.history);
     if(Array.isArray(s.monthlyBills))setMonthlyBills(s.monthlyBills);
+   setRemoteLoaded(true);
    setSyncStatus('online');setNotice('Dados recarregados da planilha.');
   }catch(err){setSyncStatus('error');setSyncError(err.message||'Falha ao carregar.');setNotice('Não foi possível carregar a planilha.');}
   finally{setSyncing(false);}
