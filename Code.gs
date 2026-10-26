@@ -9,7 +9,8 @@ const SHEETS = {
   clients: { name: 'Mensalistas', headers: ['id', 'placa', 'nome', 'telefone', 'plano', 'criadoEm'] },
   active: { name: 'EmAndamento', headers: ['id', 'placa', 'nomeCliente', 'telefone', 'modalidade', 'plano', 'entradaEm'] },
   history: { name: 'Movimentacoes', headers: ['id', 'placa', 'nomeCliente', 'telefone', 'modalidade', 'plano', 'entradaEm', 'saidaEm', 'minutos', 'valorBruto', 'desconto', 'total', 'pagamento', 'tipoCobranca'] },
-  monthlyBills: { name: 'ContasMensalistas', headers: ['id','clienteId','placa','nome','telefone','plano','referencia','vencimento','valor','pagamentosJson','criadoEm'] }
+  monthlyBills: { name: 'ContasMensalistas', headers: ['id','clienteId','placa','nome','telefone','plano','referencia','vencimento','valor','criadoEm'] },
+  monthlyPayments: { name: 'PagamentosMensalistas', headers: ['id','contaId','clienteId','placa','nome','referencia','data','valor','formaPagamento','criadoEm'] }
 };
 const DEFAULT_SETTINGS = { hourly: 6, daily: 40, garage: 400, commercial: 200, open: '08:00', close: '18:00', adminPassword: '1234' };
 
@@ -46,12 +47,16 @@ function setupEstacionaFacil() {
     sh.getRange(1, 1, 1, def.headers.length).setFontWeight('bold').setBackground('#10233f').setFontColor('#ffffff');
     sh.autoResizeColumns(1, def.headers.length);
   });
+  // Converte registros antigos que guardavam vários pagamentos em uma célula JSON
+  // para uma linha independente por pagamento. IDs existentes são preservados.
+  migrateLegacyMonthlyPayments_(ss);
+
   const settingsSheet = ss.getSheetByName(SHEETS.settings.name);
   if (settingsSheet.getLastRow() < 2) {
     settingsSheet.getRange(2, 1, Object.keys(DEFAULT_SETTINGS).length, 2)
       .setValues(Object.entries(DEFAULT_SETTINGS).map(([k,v]) => [k, String(v)]));
   }
-  SpreadsheetApp.getUi().alert('Estrutura criada. Abas: Configuracoes, Mensalistas, EmAndamento, Movimentacoes e ContasMensalistas.');
+  SpreadsheetApp.getUi().alert('Estrutura criada. Abas: Configuracoes, Mensalistas, EmAndamento, Movimentacoes, ContasMensalistas e PagamentosMensalistas.');
 }
 
 function readState_() {
@@ -63,12 +68,39 @@ function readState_() {
       if (k) settings[k] = parseSetting_(k, v);
     });
   }
+  const monthlyPayments = readRows_(ss, 'monthlyPayments').map(r => ({
+    id:String(r[0]), billId:String(r[1]), clientId:String(r[2] || ''), plate:String(r[3] || ''),
+    name:String(r[4] || ''), reference:normalizeMonth_(r[5]), date:normalizeDate_(r[6]),
+    amount:Number(r[7])||0, method:String(r[8] || ''), createdAt:normalizeDateTime_(r[9])
+  }));
+  const monthlyBills = readRows_(ss, 'monthlyBills').map(r => ({
+    id:String(r[0]), clientId:String(r[1]), plate:String(r[2] || ''), name:String(r[3] || ''),
+    phone:String(r[4] || ''), plan:String(r[5] || ''), reference:normalizeMonth_(r[6]),
+    dueDate:normalizeDate_(r[7]), amount:Number(r[8])||0, createdAt:normalizeDateTime_(r[9]), payments:[]
+  }));
+  const paymentsByBill = {};
+  monthlyPayments.forEach(function(p) {
+    const billId = String(p.billId || '');
+    if (!paymentsByBill[billId]) {
+      paymentsByBill[billId] = [];
+    }
+    paymentsByBill[billId].push({
+      id: p.id,
+      date: p.date,
+      amount: p.amount,
+      method: p.method,
+      createdAt: p.createdAt
+    });
+  });
+  monthlyBills.forEach(function(b) {
+    b.payments = paymentsByBill[String(b.id)] || [];
+  });
   return {
     settings,
     clients: readRows_(ss, 'clients').map(r => ({ id:r[0], plate:r[1], name:r[2], phone:r[3], plan:r[4], createdAt:r[5] })),
     active: readRows_(ss, 'active').map(r => ({ id:r[0], plate:r[1], customerName:r[2], customerPhone:r[3], kind:r[4], plan:r[5] || null, entryAt:r[6] })),
     history: readRows_(ss, 'history').map(r => ({ id:r[0], plate:r[1], customerName:r[2], customerPhone:r[3], kind:r[4], plan:r[5] || null, entryAt:r[6], exitAt:r[7], minutes:Number(r[8])||0, gross:Number(r[9])||0, discount:Number(r[10])||0, total:Number(r[11])||0, payment:r[12], chargeType:r[13] })),
-    monthlyBills: readRows_(ss, 'monthlyBills').map(r => ({ id:String(r[0]), clientId:String(r[1]), plate:String(r[2] || ''), name:String(r[3] || ''), phone:String(r[4] || ''), plan:String(r[5] || ''), reference:normalizeMonth_(r[6]), dueDate:normalizeDate_(r[7]), amount:Number(r[8])||0, payments:parseJson_(r[9], []), createdAt:normalizeDateTime_(r[10]) }))
+    monthlyBills
   };
 }
 
@@ -90,8 +122,54 @@ function saveState_(state) {
     writeRows_(ss, 'clients', (state.clients||[]).map(c => [c.id,c.plate,c.name,c.phone,c.plan,c.createdAt]));
     writeRows_(ss, 'active', (state.active||[]).map(v => [v.id,v.plate,v.customerName,v.customerPhone,v.kind,v.plan||'',v.entryAt]));
     writeRows_(ss, 'history', (state.history||[]).map(x => [x.id,x.plate,x.customerName,x.customerPhone,x.kind,x.plan||'',x.entryAt,x.exitAt,x.minutes,x.gross,x.discount,x.total,x.payment,x.chargeType]));
-    writeRows_(ss, 'monthlyBills', (state.monthlyBills||[]).map(b => [b.id,b.clientId,b.plate,b.name,b.phone,b.plan,b.reference,b.dueDate,b.amount,JSON.stringify(b.payments||[]),b.createdAt]));
+    const bills = state.monthlyBills || [];
+    writeRows_(ss, 'monthlyBills', bills.map(b => [b.id,b.clientId,b.plate,b.name,b.phone,b.plan,b.reference,b.dueDate,b.amount,b.createdAt]));
+    // Cada pagamento é uma linha própria, vinculada à cobrança por contaId.
+    const paymentRows = [];
+    bills.forEach(b => (b.payments || []).forEach(p => paymentRows.push([
+      p.id || Utilities.getUuid(), b.id, b.clientId, b.plate, b.name, b.reference,
+      p.date, Number(p.amount) || 0, p.method || '', p.createdAt || new Date().toISOString()
+    ])));
+    writeRows_(ss, 'monthlyPayments', paymentRows);
   } finally { lock.releaseLock(); }
+}
+
+function migrateLegacyMonthlyPayments_(ss) {
+  const billsSheet = ss.getSheetByName(SHEETS.monthlyBills.name);
+  const paymentsSheet = ss.getSheetByName(SHEETS.monthlyPayments.name);
+  if (!billsSheet || billsSheet.getLastRow() < 1 || !paymentsSheet) return;
+  const header = billsSheet.getRange(1, 1, 1, billsSheet.getLastColumn()).getDisplayValues()[0];
+  const legacyIndex = header.indexOf('pagamentosJson');
+  if (legacyIndex < 0) return; // Já está no formato normalizado.
+
+  const existingIds = new Set();
+  if (paymentsSheet.getLastRow() > 1) {
+    paymentsSheet.getRange(2, 1, paymentsSheet.getLastRow() - 1, 1).getDisplayValues().flat().forEach(id => existingIds.add(String(id)));
+  }
+  const oldRows = billsSheet.getLastRow() > 1
+    ? billsSheet.getRange(2, 1, billsSheet.getLastRow() - 1, billsSheet.getLastColumn()).getValues()
+    : [];
+  const normalizedBills = [];
+  const paymentsToAdd = [];
+  oldRows.forEach(r => {
+    if (!r[0]) return;
+    normalizedBills.push([r[0],r[1],r[2],r[3],r[4],r[5],normalizeMonth_(r[6]),normalizeDate_(r[7]),Number(r[8])||0,r[10]||'']);
+    parseJson_(r[legacyIndex], []).forEach(p => {
+      const id = String(p.id || Utilities.getUuid());
+      if (existingIds.has(id)) return;
+      existingIds.add(id);
+      paymentsToAdd.push([id,String(r[0]),String(r[1]||''),String(r[2]||''),String(r[3]||''),normalizeMonth_(r[6]),normalizeDate_(p.date),Number(p.amount)||0,String(p.method||''),p.createdAt||new Date().toISOString()]);
+    });
+  });
+  if (paymentsToAdd.length) {
+    const start = paymentsSheet.getLastRow() + 1;
+    paymentsSheet.getRange(start, 1, paymentsToAdd.length, SHEETS.monthlyPayments.headers.length).setValues(paymentsToAdd);
+  }
+  billsSheet.clearContents();
+  billsSheet.getRange(1,1,1,SHEETS.monthlyBills.headers.length).setValues([SHEETS.monthlyBills.headers]);
+  if (normalizedBills.length) billsSheet.getRange(2,1,normalizedBills.length,SHEETS.monthlyBills.headers.length).setValues(normalizedBills);
+  billsSheet.getRange(1,7,Math.max(2,normalizedBills.length+1),2).setNumberFormat('@');
+  billsSheet.setFrozenRows(1);
 }
 
 function parseJson_(value, fallback) { try { return value ? JSON.parse(String(value)) : fallback; } catch (e) { return fallback; } }
@@ -141,9 +219,13 @@ function writeRows_(ss, key, rows) {
   sh.clearContents(); sh.getRange(1,1,1,def.headers.length).setValues([def.headers]);
 
   if (key === 'monthlyBills') {
-    // Evita que o Sheets converta referências como 2026-10 em datas.
+    // Evita que o Sheets converta referência como 2026-10 em data.
     sh.getRange(1, 7, Math.max(2, rows.length + 1), 2).setNumberFormat('@');
-    sh.getRange(1, 10, Math.max(2, rows.length + 1), 1).setNumberFormat('@');
+  }
+  if (key === 'monthlyPayments') {
+    // Referência mensal, data e forma são texto explícito; valor permanece numérico.
+    sh.getRange(1, 6, Math.max(2, rows.length + 1), 2).setNumberFormat('@');
+    sh.getRange(1, 9, Math.max(2, rows.length + 1), 1).setNumberFormat('@');
   }
   if (rows.length) sh.getRange(2,1,rows.length,def.headers.length).setValues(rows.map(r => r.map(v => v == null ? '' : v)));
   sh.setFrozenRows(1);

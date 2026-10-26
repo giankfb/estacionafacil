@@ -1,0 +1,13 @@
+CORREÇÃO DO APPS SCRIPT — ESTACIONA FÁCIL
+
+Este pacote substitui o Code.gs da versão Pagamentos Separados por uma versão que remove o operador ||=, substituindo-o por uma condição compatível com o ambiente Apps Script.
+
+INSTALAÇÃO:
+1. Abra o Code.gs dentro desta pasta.
+2. Copie o conteúdo para o projeto Apps Script da planilha.
+3. Preserve sua chave APP_TOKEN atual (não use nem compartilhe a chave de outra pessoa).
+4. Salve e publique uma nova versão do Web App.
+5. Não execute setupEstacionaFacil novamente sem necessidade; a função verifica/cria as abas e pode migrar o formato antigo se detectar a coluna pagamentosJson.
+6. Teste carregar uma mensalidade, registrar pagamento parcial em dinheiro e atualizar o navegador.
+
+IMPORTANTE: a sintaxe do Code.gs foi verificada localmente. O comportamento conectado à planilha precisa ser confirmado após publicar no seu Apps Script.

@@ -58,7 +58,7 @@ O app agora pode ler e gravar automaticamente o estado na planilha via Google Ap
 - As cobranças são geradas manualmente por mês na aba Mensalistas (botão “Gerar cobranças do mês”). O vencimento padrão é dia 10.
 - Para parcelar uma conta, registre cada parcela como pagamento separado; o saldo pendente é atualizado automaticamente.
 - Relatórios: Mensalistas, Contas a receber e Saldo do mês. O PDF é gerado pela opção Imprimir/Salvar PDF do navegador; CSV também está disponível.
-- O Apps Script inclui a aba `ContasMensalistas`, que armazena cobranças e pagamentos. Execute `setupEstacionaFacil()` para criar a nova aba e publique uma nova versão do Web App.
+- O Apps Script separa `ContasMensalistas` (uma linha por cobrança) de `PagamentosMensalistas` (uma linha por pagamento). Pagamentos parciais em dinheiro, Pix ou cartão ficam em linhas independentes e ligados à cobrança pelo ID. Execute `setupEstacionaFacil()` para criar a aba nova e publicar uma nova versão do Web App. Se a planilha ainda estiver no formato antigo com `pagamentosJson`, a função de configuração tenta migrar os pagamentos existentes sem duplicar IDs.
 - A compilação completa não foi confirmada neste ambiente porque a instalação de dependências excedeu o tempo disponível. Teste localmente com `npm install` e `npm run build` antes de publicar.
 
 > Observação: a gravação real em uma planilha Google exige publicar o `Code.gs` no Google Apps Script. O ambiente deste pacote não consegue autenticar nem executar a sua planilha Google diretamente.
